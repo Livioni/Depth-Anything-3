@@ -1,7 +1,8 @@
 # Python cache
 __pycache__/
 *.py[cod]
-
+annotations/
+checkpoints/
 
 # Distribution / packaging
 workspace/

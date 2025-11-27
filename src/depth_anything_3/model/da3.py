@@ -74,6 +74,7 @@ class DepthAnything3Net(nn.Module):
             self.cam_dec = (
                 cam_dec if isinstance(cam_dec, nn.Module) else create_object(_wrap_cfg(cam_dec))
             )
+        if cam_enc is not None:
             self.cam_enc = (
                 cam_enc if isinstance(cam_enc, nn.Module) else create_object(_wrap_cfg(cam_enc))
             )
