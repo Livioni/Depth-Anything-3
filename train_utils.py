@@ -195,6 +195,28 @@ def load_model(cfg: Any, device: torch.device):
         logger.warning(f"Failed to load pretrained weights: {e}")
         logger.warning("Training from scratch...")
     
+    # Enable gradient checkpointing if configured
+    if cfg.get("use_gradient_checkpointing", False):
+        logger.info("Enabling gradient checkpointing for backbone to save memory...")
+        # Enable gradient checkpointing for backbone (DinoV2)
+        if hasattr(model, 'backbone') and hasattr(model.backbone, 'pretrained'):
+            if hasattr(model.backbone.pretrained, 'enable_gradient_checkpointing'):
+                model.backbone.pretrained.enable_gradient_checkpointing()
+                logger.info("✓ Gradient checkpointing enabled for backbone")
+            else:
+                logger.warning("Backbone does not support gradient checkpointing")
+        # For NestedDepthAnything3Net
+        elif hasattr(model, 'da3') and hasattr(model.da3, 'backbone'):
+            if hasattr(model.da3.backbone.pretrained, 'enable_gradient_checkpointing'):
+                model.da3.backbone.pretrained.enable_gradient_checkpointing()
+                logger.info("✓ Gradient checkpointing enabled for da3 backbone")
+            if hasattr(model, 'da3_metric') and hasattr(model.da3_metric, 'backbone'):
+                if hasattr(model.da3_metric.backbone.pretrained, 'enable_gradient_checkpointing'):
+                    model.da3_metric.backbone.pretrained.enable_gradient_checkpointing()
+                    logger.info("✓ Gradient checkpointing enabled for da3_metric backbone")
+        else:
+            logger.warning("Could not find backbone to enable gradient checkpointing")
+    
     # Set requires_grad
     model.requires_grad_(cfg.get("model_requires_grad", True))
     

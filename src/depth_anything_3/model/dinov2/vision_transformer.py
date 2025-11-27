@@ -103,6 +103,7 @@ class DinoVisionTransformer(nn.Module):
         rope_freq=100,
         plus_cam_token=False,
         cat_token=True,
+        use_gradient_checkpointing=False,
     ):
         """
         Args:
@@ -147,6 +148,7 @@ class DinoVisionTransformer(nn.Module):
         self.num_register_tokens = num_register_tokens
         self.interpolate_antialias = interpolate_antialias
         self.interpolate_offset = interpolate_offset
+        self.use_gradient_checkpointing = use_gradient_checkpointing
 
         self.patch_embed = embed_layer(
             img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim
@@ -315,11 +317,25 @@ class DinoVisionTransformer(nn.Module):
                 x[:, :, 0] = cam_token
 
             if self.alt_start != -1 and i >= self.alt_start and i % 2 == 1:
-                x = self.process_attention(
-                    x, blk, "global", pos=g_pos, attn_mask=kwargs.get("attn_mask", None)
-                )
+                if self.use_gradient_checkpointing and self.training:
+                    x = torch.utils.checkpoint.checkpoint(
+                        self.process_attention,
+                        x, blk, "global", g_pos, kwargs.get("attn_mask", None),
+                        use_reentrant=False
+                    )
+                else:
+                    x = self.process_attention(
+                        x, blk, "global", pos=g_pos, attn_mask=kwargs.get("attn_mask", None)
+                    )
             else:
-                x = self.process_attention(x, blk, "local", pos=l_pos)
+                if self.use_gradient_checkpointing and self.training:
+                    x = torch.utils.checkpoint.checkpoint(
+                        self.process_attention,
+                        x, blk, "local", l_pos, None,
+                        use_reentrant=False
+                    )
+                else:
+                    x = self.process_attention(x, blk, "local", pos=l_pos)
                 local_x = x
 
             if i in blocks_to_take:
@@ -377,6 +393,16 @@ class DinoVisionTransformer(nn.Module):
         outputs = [out[..., 1 + self.num_register_tokens :, :] for out in outputs]
         aux_outputs = [out[..., 1 + self.num_register_tokens :, :] for out in aux_outputs]
         return tuple(zip(outputs, camera_tokens)), aux_outputs
+
+    def enable_gradient_checkpointing(self):
+        """Enable gradient checkpointing for memory efficiency."""
+        self.use_gradient_checkpointing = True
+        logger.info("Gradient checkpointing enabled for DinoVisionTransformer")
+
+    def disable_gradient_checkpointing(self):
+        """Disable gradient checkpointing."""
+        self.use_gradient_checkpointing = False
+        logger.info("Gradient checkpointing disabled for DinoVisionTransformer")
 
 
 def vit_small(patch_size=16, num_register_tokens=0, depth=12, **kwargs):
