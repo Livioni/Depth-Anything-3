@@ -139,7 +139,8 @@ class DepthAnything3Net(nn.Module):
 
         # Extract auxiliary features if requested
         output.aux = self._extract_auxiliary_features(aux_feats, export_feat_layers, H, W)
-
+        # add image for visualization
+        output["images"] = x
         return output
 
     def _process_depth_head(

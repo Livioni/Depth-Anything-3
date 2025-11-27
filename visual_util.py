@@ -5,7 +5,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import trimesh
-import gradio as gr
 import numpy as np
 import matplotlib
 from scipy.spatial.transform import Rotation
@@ -16,25 +15,20 @@ import cv2
 import os
 import requests
 import torch
-from src.utils.pose_enc import pose_encoding_to_extri_intri
+
 from src.utils.geometry import unproject_depth_map_to_point_map, closed_form_inverse_se3
 from src.utils.rotation import mat_to_quat
 
-def get_world_points_from_depth(predictions, gt_scale = 1):
-    # print("Converting pose encoding to extrinsic and intrinsic matrices...")
-    extrinsic, intrinsic = pose_encoding_to_extri_intri(predictions["pose_enc"], predictions["images"].shape[-2:])
-    predictions["extrinsic"] = extrinsic
-    predictions["intrinsic"] = intrinsic
-
+def get_world_points_from_depth(predictions):
     # Convert tensors to numpy
     for key in predictions.keys():
         if isinstance(predictions[key], torch.Tensor):
-            predictions[key] = predictions[key].cpu().numpy().squeeze(0)  # remove batch dimension
+            predictions[key] = predictions[key].cpu().numpy().squeeze()  # remove batch dimension
 
     # Generate world points from depth map
     # print("Computing world points from depth map...")
-    depth_map = predictions["depth"] *  gt_scale  # (S, H, W, 1)
-    world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsic"], predictions["intrinsic"])
+    depth_map = predictions["depth"]  # (S, H, W, 1)
+    world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsics"], predictions["intrinsics"])
     predictions["world_points_from_depth"] = world_points
 
 def predictions_to_ply(
@@ -220,7 +214,7 @@ def predictions_to_glb(
     # Get images from predictions
     images = predictions["images"]
     # Use extrinsic matrices instead of pred_extrinsic_list
-    camera_matrices = predictions["extrinsic"]
+    camera_matrices = predictions["extrinsics"]
 
     if mask_sky:
         if target_dir is not None:

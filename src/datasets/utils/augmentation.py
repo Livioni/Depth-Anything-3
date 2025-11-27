@@ -71,4 +71,8 @@ def get_image_augmentation(
             )
         )
 
+    transform_list.append(transforms.ToTensor())
+    transform_list.append(transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                  std=[0.229, 0.224, 0.225]))
+    
     return transforms.Compose(transform_list) if transform_list else None

@@ -8,8 +8,13 @@ from safetensors.torch import load_file
 from depth_anything_3.cfg import create_object, load_config
 import viser
 import viser.transforms as viser_tf
+from src.utils.misc import select_first_batch
 from src.utils.geometry import closed_form_inverse_se3, unproject_depth_map_to_point_map
 from src.train_utils.normalization import normalize_camera_extrinsics_and_points_batch
+from visual_util import (
+    predictions_to_glb,
+    get_world_points_from_depth,
+)
 
 NORMALIZE = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
@@ -252,7 +257,7 @@ scannetppv2_dataset = Scannetppv2(
     use_cache = True,
     top_k = 64,
     quick=True,
-    verbose=True,
+    verbose=False,
     resolution=[(504,504)], 
     aug_crop=0,
     aug_focal=1,
@@ -287,12 +292,25 @@ new_extrinsics, _, new_world_points, new_depths = normalize_camera_extrinsics_an
                                                 point_masks = batch['valid_mask'])
 
 
+input_extrinsics = new_extrinsics.clone()
+input_extrinsics = torch.cat(
+    [
+        input_extrinsics,
+        torch.zeros((1, new_extrinsics.shape[1], 1, 4), device=torch.device("cpu")),
+    ],
+    dim=-2,
+)
+input_extrinsics[:, :, -1, -1] = 1.0
+input_intrinsics = batch['intrinsic'].clone()
+
 
 with torch.no_grad():
     if len(images.shape) == 4:
         images = images.unsqueeze(0)   # [B, N, 3, H, W]
     outputs = model(
-        images.to(device=device), 
+        x=images.to(device=device), 
+        extrinsics=input_extrinsics.to(device=device),
+        intrinsics=input_intrinsics.to(device=device),
     )
     
     outputs['images'] = batch['images'].numpy()   # add back original images
@@ -304,7 +322,24 @@ with torch.no_grad():
         "extrinsic": outputs.extrinsics.squeeze().detach().cpu().numpy(),   # (S, 3, 4)
         "intrinsic": outputs.intrinsics.squeeze().detach().cpu().numpy(),   # (S, 3, 3)
     }
-
+    
+    predictions_0 = select_first_batch(outputs)
+    get_world_points_from_depth(predictions_0)
+    
+    # Convert predictions to GLB format
+    # glbscene = predictions_to_glb(
+    #     predictions_0,
+    #     conf_thres=1,
+    #     filter_by_frames='All',
+    #     mask_black_bg=False,
+    #     mask_white_bg=False,
+    #     show_cam=True,
+    #     mask_sky=False,
+    #     target_dir="output",
+    #     prediction_mode="Predicted Depth",
+    # )
+    # glbscene.export(file_obj='test_scene.glb')
+    
     # pred_dict["extrinsics"] = batch['extrinsic']
     # pred_dict["intrinsics"] = batch['intrinsic']
     # pred_dict["world_points"] = batch['world_points']

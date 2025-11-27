@@ -253,19 +253,9 @@ def to_cpu(x):
 
 
 def select_first_batch(inputs, weight_dtype=None):
-    """
-    移除 inputs 字典中所有张量的 batch 维度，并根据需要修改张量的数据类型。
-    
-    参数：
-        inputs (dict): 包含多个带 batch 维度的张量的字典。
-        keys (list, optional): 需要处理的键。如果为 None，则默认处理字典中的所有张量。
-        weight_dtype (torch.dtype, optional): 若指定，则将所有张量转换为该数据类型。
-    
-    返回：
-        dict: 移除 batch 维度并转换数据类型后的新字典。
-    """
+
     new_dicts = {}
-    keys = ["pose_enc", "depth", "world_points", "images", "extrinsic", "intrinsic", "world_points_from_depth", 'depth_conf', 'world_points_conf']
+    keys = ["depth", "world_points", "images", "extrinsics", "intrinsics", 'depth_conf',]
     for key, value in inputs.items():
         # 只处理 Tensor 类型且符合 keys 中条件的元素
         if isinstance(value, torch.Tensor) and (keys is None or key in keys):
@@ -278,10 +268,6 @@ def select_first_batch(inputs, weight_dtype=None):
             # 如果指定了 weight_dtype，则转换数据类型
             if weight_dtype:
                 value = value.to(weight_dtype)
-        elif isinstance(value, list) and key == "pose_enc":
-            # 如果是 list，则取第一个元素
-            value = value[-1]
-            value = value[:1, ...].detach()
         
         new_dicts[key] = value
     

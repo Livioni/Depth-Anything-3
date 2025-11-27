@@ -24,7 +24,7 @@ import accelerate
 from tqdm import tqdm
 
 from accelerate.logging import get_logger
-from accelerate.utils import ProjectConfiguration, set_seed
+from accelerate.utils import ProjectConfiguration, set_seed, DistributedDataParallelKwargs
 
 from src.utils.configs import parse_configs
 from src.datasets.utils.misc import merge_dicts
@@ -64,12 +64,19 @@ if __name__ == '__main__':
         project_dir=save_dir,
         logging_dir=logging_dir
     )
-    
+
+    # Configure DDP behavior (handle unused params & grad bucket view)
+    ddp_kwargs = DistributedDataParallelKwargs(
+        find_unused_parameters=True,
+        gradient_as_bucket_view=False,
+    )
+
     accelerator = accelerate.Accelerator(
         mixed_precision=cfg.get("mixed_precision", "no"),
         log_with=cfg.get("report_to", "tensorboard"),
         project_config=accelerator_project_config,
         gradient_accumulation_steps=cfg.get("gradient_accumulation_steps", 1),
+        kwargs_handlers=[ddp_kwargs],
     )
     
     # Setup logging
@@ -276,11 +283,6 @@ if __name__ == '__main__':
                 point_masks=batch['valid_mask'],
             )
             
-            # Store original inputs for model
-            input_extrinsics = batch['extrinsic'].clone()
-            input_depths = batch['depth'].clone()
-            input_mask = batch['valid_mask'].clone()
-            
             # Update batch with normalized values for loss computation
             batch['extrinsic'] = new_extrinsics
             batch['world_points'] = new_world_points
@@ -288,7 +290,14 @@ if __name__ == '__main__':
             
             # Forward pass with automatic mixed precision
             with torch.amp.autocast('cuda', dtype=weight_dtype):
-                predictions = model(batch['images'])
+                pose_condition_prob = cfg.get("pose_condition_prob", 0.0)
+                use_pose = torch.rand(1).item() < pose_condition_prob
+                if use_pose:
+                    predictions = model(x=batch['images'], 
+                                        extrinsics=batch['extrinsic'], 
+                                        intrinsics=batch['intrinsic'])
+                else:
+                    predictions = model(x=batch['images'])
             
             # Compute loss (disable autocast for loss computation)
             loss_details = {}

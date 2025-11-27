@@ -12,8 +12,8 @@ wandb = False
 tensorboard = False
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 100
-checkpointing_steps = 200
+num_save_visual = 500
+checkpointing_steps = 500
 
 # == Model Configuration ==
 model_config = "src/depth_anything_3/configs/da3-large.yaml"
@@ -32,6 +32,7 @@ gradient_accumulation_steps = 2
 max_grad_norm = 1.0
 drop_prob = 0.1
 check_unused_parameters = True  # Set to True to check for unused parameters during training
+pose_condition_prob = 0.2
 
 # == Dataset Configuration ==
 train_batch_images = 18
@@ -86,6 +87,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"400 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"1000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 

@@ -23,7 +23,7 @@ try:
 except ImportError:
     heif_support_enabled = False
 
-ImgNorm = tvf.Compose([tvf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]), tvf.ToTensor()])
+ImgNorm = tvf.Compose([tvf.ToTensor()])
 ToTensor = tvf.ToTensor()
 TAG_FLOAT = 202021.25
 
