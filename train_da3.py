@@ -109,45 +109,11 @@ if __name__ == '__main__':
     )
     
     # ======================================================
-    # 3. Optimizer, Scheduler, and Loss
+    # 3. Optimizer and Loss
     # ======================================================
     
     # Build optimizer
     optimizer = build_optimizer(model, cfg)
-    
-    # Calculate training steps
-    # NOTE: These calculations are done BEFORE accelerator.prepare()
-    # After prepare(), the dataloader will be automatically sharded by Accelerate
-    world_size = accelerator.num_processes
-    gradient_accumulation_steps = cfg.get("gradient_accumulation_steps", 2)
-    
-    # Total batches BEFORE sharding (dataloader returns full dataset size)
-    total_batches_before_sharding = len(train_dataloader)
-    
-    # Accelerator.prepare() will automatically shard the dataloader
-    # Each process will get approximately: total_batches // world_size
-    # Then we apply gradient accumulation: local_batches // gradient_accumulation_steps
-    batches_per_process = total_batches_before_sharding // world_size
-    local_steps_per_epoch = batches_per_process // gradient_accumulation_steps
-    total_training_steps = cfg.get('num_train_epochs') * local_steps_per_epoch
-    
-    logger.info("Training steps calculation (BEFORE Accelerate sharding):")
-    logger.info(f"  World size: {world_size}")
-    logger.info(f"  Total batches (full dataset): {total_batches_before_sharding}")
-    logger.info(f"  Batches per process (estimated): {batches_per_process}")
-    logger.info(f"  Gradient accumulation steps: {gradient_accumulation_steps}")
-    logger.info(f"  Steps per epoch (per process, estimated): {local_steps_per_epoch}")
-    logger.info(f"  Total training steps (estimated): {total_training_steps}")
-    
-    # Build learning rate scheduler
-    # Note: Each process runs the same number of steps independently in DDP
-    # So we use the per-process total_training_steps, not multiplied by world_size
-    lr_scheduler = build_cosine_warmup_scheduler(
-        optimizer=optimizer,
-        warmup_steps=cfg.get("warmup_steps", 5000),
-        total_steps=total_training_steps,
-        eta_min_factor=cfg.get("eta_min_factor", 0.1)
-    )
     
     # Build loss criterion
     train_criterion = build_loss_criterion(cfg)
@@ -158,27 +124,39 @@ if __name__ == '__main__':
     logger.info("Preparing model, optimizer, and dataloaders for distributed training...")
     logger.info("Made all model parameters and buffers contiguous for DDP compatibility")
     
-    # Prepare all components
-    # Accelerate will detect if model is wrapped in DDP and skip re-wrapping
-    model, optimizer, lr_scheduler, train_dataloader = \
-        accelerator.prepare(model, optimizer, lr_scheduler, train_dataloader)
+    # Prepare model, optimizer, and dataloader FIRST (WITHOUT scheduler)
+    # This is important: we need to know the actual sharded dataloader length
+    # before we can calculate the correct total_training_steps for the scheduler
+    model, optimizer, train_dataloader = \
+        accelerator.prepare(model, optimizer, train_dataloader)
     
-    # Verify actual steps after sharding
+    # NOW calculate training steps based on ACTUAL sharded dataloader
     # After prepare(), len(train_dataloader) returns the LOCAL length for this process
+    world_size = accelerator.num_processes
+    gradient_accumulation_steps = cfg.get("gradient_accumulation_steps", 2)
     actual_local_batches = len(train_dataloader)
-    actual_local_steps = actual_local_batches // gradient_accumulation_steps
-    logger.info(f"After sharding - Local dataloader length: {actual_local_batches}")
-    logger.info(f"After sharding - Actual steps per epoch (this process): {actual_local_steps}")
+    local_steps_per_epoch = actual_local_batches // gradient_accumulation_steps
+    total_training_steps = cfg.get('num_train_epochs') * local_steps_per_epoch
     
-    # Verify that estimation matches reality
-    if actual_local_steps != local_steps_per_epoch:
-        logger.warning(f"Steps mismatch! Estimated: {local_steps_per_epoch}, Actual: {actual_local_steps}")
-        logger.warning(f"This may happen when total batches is not evenly divisible by world_size.")
-        logger.info(f"Using actual steps ({actual_local_steps}) for progress tracking.")
-        # Update to use actual steps
-        local_steps_per_epoch = actual_local_steps
-        # Note: We keep the original total_training_steps for the scheduler
-        # as it was already configured before prepare()
+    logger.info("Training steps calculation (AFTER Accelerate sharding):")
+    logger.info(f"  World size: {world_size}")
+    logger.info(f"  Actual local batches: {actual_local_batches}")
+    logger.info(f"  Gradient accumulation steps: {gradient_accumulation_steps}")
+    logger.info(f"  Steps per epoch (per process): {local_steps_per_epoch}")
+    logger.info(f"  Total training steps: {total_training_steps}")
+    
+    # Build learning rate scheduler with CORRECT total_training_steps
+    # Note: Each process runs the same number of steps independently in DDP
+    # So we use the per-process total_training_steps, not multiplied by world_size
+    lr_scheduler = build_cosine_warmup_scheduler(
+        optimizer=optimizer,
+        warmup_steps=cfg.get("warmup_steps", 5000),
+        total_steps=total_training_steps,
+        eta_min_factor=cfg.get("eta_min_factor", 0.1)
+    )
+    
+    # Prepare the scheduler (if needed by accelerate)
+    lr_scheduler = accelerator.prepare(lr_scheduler)
     
     # ======================================================
     # 5. Resume from Checkpoint (if specified)
