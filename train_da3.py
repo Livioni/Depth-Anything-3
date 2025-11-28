@@ -1,18 +1,3 @@
-#!/usr/bin/env python3
-"""
-OmniVGGT Training Script
-
-This script trains the OmniVGGT model with support for:
-- Multi-GPU training with Accelerate
-- Mixed precision training
-- Gradient accumulation
-- Learning rate scheduling with warmup
-- WandB and TensorBoard logging
-- Checkpoint saving and resuming
-
-License: MIT
-"""
-
 import os
 import gc
 from pathlib import Path
@@ -155,8 +140,6 @@ if __name__ == '__main__':
         eta_min_factor=cfg.get("eta_min_factor", 0.1)
     )
     
-    # Prepare the scheduler (if needed by accelerate)
-    lr_scheduler = accelerator.prepare(lr_scheduler)
     
     # ======================================================
     # 5. Resume from Checkpoint (if specified)
@@ -399,10 +382,11 @@ if __name__ == '__main__':
         logger.info("=" * 60)
         
         # Save checkpoint at end of epoch (optional)
-        if accelerator.is_main_process:
-            epoch_save_path = os.path.join(save_dir, f"checkpoint-epoch-{epoch + 1}")
-            logger.info(f"Saving end-of-epoch checkpoint to {epoch_save_path}...")
-            accelerator.save_state(epoch_save_path)
+        if cfg.get("save_each_epoch",False):
+            if accelerator.is_main_process:
+                epoch_save_path = os.path.join(save_dir, f"checkpoint-epoch-{epoch + 1}")
+                logger.info(f"Saving end-of-epoch checkpoint to {epoch_save_path}...")
+                accelerator.save_state(epoch_save_path)
         
         # Clean up
         gc.collect()
