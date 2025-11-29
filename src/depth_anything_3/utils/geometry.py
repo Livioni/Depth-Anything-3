@@ -19,6 +19,8 @@ import torch
 import torch.nn.functional as F
 from einops import einsum
 
+from utils.geometry import closed_form_inverse_se3
+
 
 def as_homogeneous(ext):
     """
@@ -496,3 +498,260 @@ def unproject_depth(
     world_points = camera_space_to_world_space(camera_points, c2w)  # (..., h, w, 3)
 
     return world_points
+
+def normalize_extrinsics(ex_t: torch.Tensor | None) -> torch.Tensor | None:
+    """
+    Normalize extrinsics to canonical coordinate system.
+    
+    This function:
+    1. Aligns all cameras to the first camera's coordinate system
+    2. Normalizes the scale based on median camera distance
+    
+    Args:
+        ex_t: Extrinsics tensor of shape (B, N, 3, 4) or (B, N, 4, 4) or (N, 3, 4) or (N, 4, 4)
+              where B is batch size, N is number of cameras
+              These are world-to-camera transforms
+    
+    Returns:
+        Normalized extrinsics with the same shape as input
+    """
+    if ex_t is None:
+        return None
+    
+    # Handle both batched and unbatched inputs
+    original_shape = ex_t.shape
+    is_batched = ex_t.ndim == 4  # (B, N, 3/4, 4)
+    
+    if not is_batched:
+        # Add batch dimension: (N, 3/4, 4) -> (1, N, 3/4, 4)
+        ex_t = ex_t.unsqueeze(0)
+    
+    B, N = ex_t.shape[:2]
+    
+    # Ensure homogeneous form (B, N, 4, 4)
+    ex_t_homog = as_homogeneous(ex_t)
+    
+    # Get the first camera's extrinsics for each batch: (B, 1, 4, 4)
+    first_camera = ex_t_homog[:, :1, :, :]
+    
+    # Compute inverse to use as alignment transform
+    # Reshape to (B, 4, 4) for affine_inverse
+    transform = affine_inverse(first_camera.squeeze(1))  # (B, 4, 4)
+    
+    # Expand transform for broadcasting: (B, 1, 4, 4)
+    transform = transform.unsqueeze(1)
+    
+    # Align all cameras to the first camera: ex_t_norm = ex_t @ transform
+    # (B, N, 4, 4) @ (B, 1, 4, 4) -> (B, N, 4, 4)
+    ex_t_norm = ex_t_homog @ transform
+    
+    # Convert to camera-to-world for distance computation
+    # Reshape to (B*N, 4, 4)
+    ex_t_norm_flat = ex_t_norm.reshape(B * N, 4, 4)
+    c2ws_flat = affine_inverse(ex_t_norm_flat)
+    c2ws = c2ws_flat.reshape(B, N, 4, 4)
+    
+    # Extract camera positions (translations) in world space
+    translations = c2ws[..., :3, 3]  # (B, N, 3)
+    
+    # Compute distances from origin for each camera
+    dists = translations.norm(dim=-1)  # (B, N)
+    
+    # Compute median distance for each batch
+    median_dist = torch.median(dists, dim=-1)[0]  # (B,)
+    median_dist = torch.clamp(median_dist, min=1e-1)
+    
+    # Normalize translation by median distance
+    # Reshape for broadcasting: (B, 1, 1)
+    scale_factor = median_dist.view(B, 1, 1)
+    
+    # Extract and normalize translation component
+    # ex_t_norm is (B, N, 4, 4), we want to modify the translation part (last column, first 3 rows)
+    translation = ex_t_norm[:, :, :3, 3]  # (B, N, 3)
+    translation_normalized = translation / scale_factor  # (B, N, 3) / (B, 1, 1) -> (B, N, 3)
+    ex_t_norm[:, :, :3, 3] = translation_normalized
+    
+    # Restore original shape if input was not batched
+    if not is_batched:
+        ex_t_norm = ex_t_norm.squeeze(0)  # (1, N, 4, 4) -> (N, 4, 4)
+    
+    # Restore original last two dimensions if input was (3, 4)
+    if original_shape[-2] == 3:
+        ex_t_norm = ex_t_norm[..., :3, :]
+    
+    return ex_t_norm
+
+def generate_rays_from_batch(
+    images_shape: tuple[int, ...],
+    extrinsics: torch.Tensor,  # (B, N, 3, 4) or (B, N, 4, 4)
+    intrinsics: torch.Tensor,  # (B, N, 3, 3)
+) -> tuple[torch.Tensor, torch.Tensor]:  # ray_origins, ray_directions (B, N, H, W, 3)
+    """
+    Generate world-space rays from batch data.
+
+    Args:
+        images_shape: Shape of images tensor (B, N, C, H, W)
+        extrinsics: Camera extrinsics (B, N, 3, 4) or (B, N, 4, 4)
+        intrinsics: Camera intrinsics (B, N, 3, 3)
+
+    Returns:
+        ray_origins: Ray origins in world space (B, N, H, W, 3)
+        ray_directions: Ray directions in world space (B, N, H, W, 3)
+        
+    def get_rays_np(H, W, K, c2w):
+        i, j = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32), indexing='xy')
+        dirs = np.stack([(i-K[0][2])/K[0][0], -(j-K[1][2])/K[1][1], -np.ones_like(i)], -1)
+        # Rotate ray directions from camera frame to the world frame
+        rays_d = np.sum(dirs[..., np.newaxis, :] * c2w[:3,:3], -1)  # dot product, equals to: [c2w.dot(dir) for dir in dirs]
+        # Translate camera frame's origin to the world frame. It is the origin of all rays.
+        rays_o = np.broadcast_to(c2w[:3,-1], np.shape(rays_d))
+        return rays_o, rays_d
+    """
+    # Extract dimensions
+    B, N, C, H_orig, W_orig = images_shape
+    
+    # Compute scaled dimensions
+    scale_factor = 1.75
+    H = int(H_orig // scale_factor)
+    W = int(W_orig // scale_factor)
+    
+    # Scale intrinsics to match the new resolution
+    intrinsics_scaled = intrinsics.clone()
+    intrinsics_scaled[..., 0, 0] = intrinsics[..., 0, 0] / scale_factor  # fx
+    intrinsics_scaled[..., 1, 1] = intrinsics[..., 1, 1] / scale_factor  # fy
+    intrinsics_scaled[..., 0, 2] = intrinsics[..., 0, 2] / scale_factor  # cx
+    intrinsics_scaled[..., 1, 2] = intrinsics[..., 1, 2] / scale_factor  # cy
+
+    # Generate normalized pixel coordinates for the image grid
+    # coordinates shape: (H, W, 2) with values in [0, 1]
+    coordinates, _ = sample_image_grid((H, W), device=extrinsics.device)
+    
+    # Convert normalized coordinates [0, 1] to pixel coordinates
+    # sample_image_grid returns (x, y) in range [0, 1], convert to pixel coords
+    coordinates = coordinates * torch.tensor([W, H], device=coordinates.device, dtype=coordinates.dtype)
+
+    # Expand coordinates to match batch dimensions (B, N, H, W, 2)
+    coordinates = coordinates.unsqueeze(0).unsqueeze(0).expand(B, N, H, W, 2)
+
+    # Convert extrinsics (w2c) to c2w and ensure homogeneous form
+    # Reshape to process all cameras at once
+    extrinsics_reshaped = extrinsics.reshape(B * N, *extrinsics.shape[-2:])
+    extrinsics_c2w = closed_form_inverse_se3(extrinsics_reshaped)
+    extrinsics_c2w = extrinsics_c2w.reshape(B, N, *extrinsics_c2w.shape[-2:])
+    extrinsics_homog = as_homogeneous(extrinsics_c2w)
+
+    # Reshape for batch processing
+    coordinates_flat = coordinates.reshape(B * N, H, W, 2)
+    extrinsics_flat = extrinsics_homog.reshape(B * N, 4, 4).unsqueeze(-3).unsqueeze(-3).expand(-1, H, W, -1, -1)
+    intrinsics_flat = intrinsics_scaled.reshape(B * N, 3, 3).unsqueeze(-3).unsqueeze(-3).expand(-1, H, W, -1, -1)
+
+    # Generate world space rays (origins and directions)
+    ray_origins, ray_directions = get_world_rays(
+        coordinates_flat,
+        extrinsics_flat,
+        intrinsics_flat
+    )
+
+    # Reshape back to (B, N, H, W, 3)
+    ray_origins = ray_origins.reshape(B, N, H, W, 3)
+    ray_directions = ray_directions.reshape(B, N, H, W, 3)
+
+    return ray_origins, ray_directions
+
+
+def generate_rays_at_resolution(
+    target_height: int,
+    target_width: int,
+    extrinsics: torch.Tensor,  # (B, N, 3, 4) or (B, N, 4, 4)
+    intrinsics: torch.Tensor,  # (B, N, 3, 3)
+    original_height: int = None,
+    original_width: int = None,
+) -> tuple[torch.Tensor, torch.Tensor]:  # ray_origins, ray_directions (B, N, H_target, W_target, 3)
+    """
+    Generate rays at a specific target resolution.
+    
+    If the target resolution differs from the original resolution, this function
+    automatically adjusts the intrinsics to match the new resolution.
+    
+    Args:
+        target_height: Desired output height
+        target_width: Desired output width
+        extrinsics: Camera extrinsics (B, N, 3, 4) or (B, N, 4, 4), world-to-camera transform
+        intrinsics: Camera intrinsics (B, N, 3, 3) at original resolution
+        original_height: Original image height (if None, assumes intrinsics match target resolution)
+        original_width: Original image width (if None, assumes intrinsics match target resolution)
+    
+    Returns:
+        ray_origins: Ray origins in world space (B, N, H_target, W_target, 3)
+        ray_directions: Ray directions in world space (B, N, H_target, W_target, 3)
+    
+    Example:
+        # Generate rays at original resolution
+        rays_o, rays_d = generate_rays_at_resolution(480, 640, extrinsics, intrinsics)
+        
+        # Generate rays at lower resolution (correctly adjusting intrinsics)
+        rays_o_small, rays_d_small = generate_rays_at_resolution(
+            240, 320, extrinsics, intrinsics, 
+            original_height=480, original_width=640
+        )
+    """
+    B, N = extrinsics.shape[:2]
+    device = extrinsics.device
+    dtype = extrinsics.dtype
+    
+    # Adjust intrinsics if target resolution differs from original
+    if original_height is not None and original_width is not None:
+        scale_h = target_height / original_height
+        scale_w = target_width / original_width
+        
+        intrinsics_adjusted = intrinsics.clone()
+        intrinsics_adjusted[..., 0, 0] = intrinsics[..., 0, 0] * scale_w  # fx
+        intrinsics_adjusted[..., 1, 1] = intrinsics[..., 1, 1] * scale_h  # fy
+        intrinsics_adjusted[..., 0, 2] = intrinsics[..., 0, 2] * scale_w  # cx
+        intrinsics_adjusted[..., 1, 2] = intrinsics[..., 1, 2] * scale_h  # cy
+    else:
+        intrinsics_adjusted = intrinsics
+    
+    # Create pixel coordinate grids at target resolution
+    # Use the same dtype as extrinsics to avoid type mismatch
+    # With 'xy' indexing, meshgrid(x, y) returns grids of shape (len(y), len(x))
+    # i.e., meshgrid(arange(W), arange(H)) returns (H, W) shaped tensors
+    i, j = torch.meshgrid(
+        torch.arange(target_width, dtype=dtype, device=device),   # x: [0, W-1]
+        torch.arange(target_height, dtype=dtype, device=device),  # y: [0, H-1]
+        indexing='xy'
+    )
+    # i and j are already (H, W) shaped, where i contains x-coords and j contains y-coords
+    
+    # Extract adjusted intrinsics parameters
+    fx = intrinsics_adjusted[..., 0, 0].view(B, N, 1, 1)
+    fy = intrinsics_adjusted[..., 1, 1].view(B, N, 1, 1)
+    cx = intrinsics_adjusted[..., 0, 2].view(B, N, 1, 1)
+    cy = intrinsics_adjusted[..., 1, 2].view(B, N, 1, 1)
+    
+    # Compute camera-space ray directions
+    dirs_x = (i - cx) / fx
+    dirs_y = -(j - cy) / fy
+    dirs_z = -torch.ones_like(dirs_x)
+    dirs = torch.stack([dirs_x, dirs_y, dirs_z], dim=-1)  # (B, N, H_target, W_target, 3)
+    
+    # Convert extrinsics to c2w
+    extrinsics_reshaped = extrinsics.reshape(B * N, *extrinsics.shape[-2:])
+    c2w = closed_form_inverse_se3(extrinsics_reshaped)
+    c2w = c2w.reshape(B, N, *c2w.shape[-2:])
+    
+    # Extract rotation and translation
+    R = c2w[..., :3, :3]
+    T = c2w[..., :3, 3]
+    if T.dim() == 4:
+        T = T.squeeze(-1)
+    
+    # Transform ray directions to world space
+    R_expanded = R.unsqueeze(2).unsqueeze(2)
+    dirs_expanded = dirs.unsqueeze(-1)
+    rays_d = torch.matmul(R_expanded, dirs_expanded).squeeze(-1)
+    
+    # Broadcast ray origins
+    rays_o = T.unsqueeze(2).unsqueeze(2).expand(B, N, target_height, target_width, 3)
+    
+    return rays_o.to(dtype), rays_d.to(dtype)

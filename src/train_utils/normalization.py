@@ -23,41 +23,7 @@ def check_valid_tensor(input_tensor: Optional[torch.Tensor], name: str = "tensor
         if torch.isnan(input_tensor).any() or torch.isinf(input_tensor).any():
             logging.warning(f"NaN or Inf found in tensor: {name}")
 
-def get_gt_scale(
-    extrinsics: torch.Tensor,
-    world_points: Optional[torch.Tensor] = None,
-    depths: Optional[torch.Tensor] = None,
-    point_masks: Optional[torch.Tensor] = None,
-):
-    B, S, _, _ = extrinsics.shape
-    device = extrinsics.device
-    # assert device == torch.device("cpu")
-    if depths is not None:
-        depths = depths.squeeze(-1)
 
-    # Convert extrinsics to homogeneous form: (B, N,4,4)
-    extrinsics_homog = torch.cat(
-        [
-            extrinsics,
-            torch.zeros((B, S, 1, 4), device=device),
-        ],
-        dim=-2,
-    )
-    extrinsics_homog[:, :, -1, -1] = 1.0
-
-    # first_cam_extrinsic_inv, the inverse of the first camera's extrinsic matrix
-    # which can be also viewed as the cam_to_world extrinsic matrix
-    first_cam_extrinsic_inv = closed_form_inverse_se3(extrinsics_homog[:, 0])
-    # new_extrinsics = torch.matmul(extrinsics_homog, first_cam_extrinsic_inv)
-    new_extrinsics = torch.matmul(extrinsics_homog, first_cam_extrinsic_inv.unsqueeze(1))  # (B,N,4,4)
-    R = extrinsics[:, 0, :3, :3]
-    t = extrinsics[:, 0, :3, 3]
-    new_world_points = (world_points @ R.transpose(-1, -2).unsqueeze(1).unsqueeze(2)) + t.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-    dist = new_world_points.norm(dim=-1)
-    dist_sum = (dist * point_masks).sum(dim=[1,2,3])
-    valid_count = point_masks.sum(dim=[1,2,3])
-    avg_scale = (dist_sum / (valid_count + 1e-3)).clamp(min=1e-6, max=1e6)
-    return avg_scale
 
 def normalize_camera_extrinsics_and_points_batch(
     extrinsics: torch.Tensor,

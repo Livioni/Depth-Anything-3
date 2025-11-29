@@ -105,7 +105,7 @@ class DepthAnything3Net(nn.Module):
         intrinsics: torch.Tensor | None = None,
         export_feat_layers: list[int] | None = [],
         infer_gs: bool = False,
-        use_ray_pose: bool = False,
+        use_ray_pose: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the network.

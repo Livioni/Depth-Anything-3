@@ -15,6 +15,7 @@ from src.utils.configs import parse_configs
 from src.datasets.utils.misc import merge_dicts
 from src.utils.misc import select_first_batch
 from src.train_utils.normalization import normalize_camera_extrinsics_and_points_batch
+from src.depth_anything_3.utils.geometry import normalize_extrinsics
 from visual_util import (
     predictions_to_glb,
     get_world_points_from_depth,
@@ -244,18 +245,21 @@ if __name__ == '__main__':
                 point_masks=batch['valid_mask'],
             )
             
+            # According to def _normalize_extrinsics(self, ex_t: torch.Tensor | None) in src/depth_anything_3/api.py
+            extra_input_extrinsic_gt = normalize_extrinsics(batch['extrinsic'])
+            
             # Update batch with normalized values for loss computation
             batch['extrinsic'] = new_extrinsics
             batch['world_points'] = new_world_points
             batch['depth'] = new_depths
-            
+                        
             # Forward pass with automatic mixed precision
             with torch.amp.autocast('cuda', dtype=weight_dtype):
                 pose_condition_prob = cfg.get("pose_condition_prob", 0.0)
                 use_pose = torch.rand(1).item() < pose_condition_prob
                 if use_pose:
                     predictions = model(x=batch['images'], 
-                                        extrinsics=batch['extrinsic'], 
+                                        extrinsics=extra_input_extrinsic_gt, 
                                         intrinsics=batch['intrinsic'])
                 else:
                     predictions = model(x=batch['images'])
