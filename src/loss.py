@@ -24,13 +24,13 @@ class MultitaskLoss(torch.nn.Module):
     - Point loss
     - Tracking loss (not cleaned yet, dirty code is at the bottom of this file)
     """
-    def __init__(self, camera=None, depth=None, point=None, track=None, **kwargs):
+    def __init__(self, camera=None, depth=None, point=None, ray=None, **kwargs):
         super().__init__()
         # Loss configuration dictionaries for each task
         self.camera = camera
         self.depth = depth
         self.point = point
-        self.track = track
+        self.ray = ray
 
     def forward(self, predictions, batch) -> torch.Tensor:
         """
@@ -61,10 +61,62 @@ class MultitaskLoss(torch.nn.Module):
             total_loss = total_loss + depth_loss
             loss_dict.update(depth_loss_dict)
 
+        if "ray" in predictions and self.ray is not None:
+            ray_loss_dict = compute_ray_loss(predictions, batch, **self.ray)
+            ray_loss = ray_loss_dict["loss_ray"] * self.ray["weight"]
+            total_loss = total_loss + ray_loss
+            loss_dict.update(ray_loss_dict) 
         
         loss_dict["objective"] = total_loss
 
         return loss_dict
+
+
+
+
+def compute_ray_loss(predictions, batch, weight_origins=1.0, weight_directions=1.0, **kwargs):
+    """
+    Compute L1 loss for ray origins and directions.
+    
+    Args:
+        predictions: Dict containing 'ray' predictions
+        batch: Dict containing ground truth 'ray_origins' and 'ray_directions'
+        weight_origins: Weight for ray origins loss
+        weight_directions: Weight for ray directions loss
+    
+    Returns:
+        Dict containing individual ray losses and total ray loss
+    """
+    pred_ray = predictions['ray']
+    
+    # Assuming pred_ray contains both origins and directions
+    # pred_ray shape: (B, ..., 6) where first 3 dims are origins, last 3 are directions
+    pred_origins = pred_ray[..., :3]
+    pred_directions = pred_ray[..., 3:]
+
+    gt_origins = batch['ray_origins']
+    gt_directions = batch['ray_directions']
+    
+    # Check for invalid values
+    gt_origins = check_and_fix_inf_nan(gt_origins, "gt_ray_origins", hard_max=None)
+    gt_directions = check_and_fix_inf_nan(gt_directions, "gt_ray_directions", hard_max=None)
+    
+    # Compute L1 loss for origins
+    loss_origins = (pred_origins - gt_origins).abs().mean()
+    loss_origins = check_and_fix_inf_nan(loss_origins, "loss_ray_origins")
+    
+    # Compute L1 loss for directions
+    loss_directions = (pred_directions - gt_directions).abs().mean()
+    loss_directions = check_and_fix_inf_nan(loss_directions, "loss_ray_directions")
+    
+    # Compute weighted total loss
+    total_ray_loss = loss_origins * weight_origins + loss_directions * weight_directions
+    
+    return {
+        "loss_ray": total_ray_loss,
+        "loss_ray_origins": loss_origins,
+        "loss_ray_directions": loss_directions
+    }
 
 
 def compute_camera_loss(

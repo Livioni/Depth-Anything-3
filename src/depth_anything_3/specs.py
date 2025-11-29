@@ -41,5 +41,6 @@ class Prediction:
     intrinsics: np.ndarray | None = None  # N, 3, 3
     processed_images: np.ndarray | None = None  # N, H, W, 3 - processed images for visualization
     gaussians: Gaussians | None = None  # 3D gaussians
+    semantic: np.ndarray | None = None  # N, C, H, W - semantic segmentation
     aux: dict[str, Any] = None  #
     scale_factor: Optional[float] = None  # metric scale

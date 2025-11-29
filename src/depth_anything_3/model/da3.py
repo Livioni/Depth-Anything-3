@@ -63,7 +63,7 @@ class DepthAnything3Net(nn.Module):
     # Patch size for feature extraction
     PATCH_SIZE = 14
 
-    def __init__(self, net, head, cam_dec=None, cam_enc=None, gs_head=None, gs_adapter=None):
+    def __init__(self, net, head, cam_dec=None, cam_enc=None, gs_head=None, gs_adapter=None, seg_head=None):
         """
         Initialize DepthAnything3Net with given yaml-initialized configuration.
         """
@@ -97,6 +97,11 @@ class DepthAnything3Net(nn.Module):
                     gs_head["output_dim"] == gs_out_dim
                 ), f"gs_head output_dim should set to {gs_out_dim}, got {gs_head['output_dim']}"
                 self.gs_head = create_object(_wrap_cfg(gs_head))
+        self.seg_head = None
+        if seg_head is not None:
+            self.seg_head = (
+                seg_head if isinstance(seg_head, nn.Module) else create_object(_wrap_cfg(seg_head))
+            )
 
     def forward(
         self,
@@ -112,8 +117,8 @@ class DepthAnything3Net(nn.Module):
 
         Args:
             x: Input images (B, N, 3, H, W)
-            extrinsics: Camera extrinsics (B, N, 4, 4) 
-            intrinsics: Camera intrinsics (B, N, 3, 3) 
+            extrinsics: Camera extrinsics (B, N, 4, 4) - unused
+            intrinsics: Camera intrinsics (B, N, 3, 3) - unused
             feat_layers: List of layer indices to extract features from
 
         Returns:
@@ -135,12 +140,12 @@ class DepthAnything3Net(nn.Module):
         # Process features through depth head
         with torch.autocast(device_type=x.device.type, enabled=False):
             output = self._process_depth_head(feats, H, W)
-            if use_ray_pose:
-                output = self._process_ray_pose_estimation(output, H, W)
-            else:
-                output = self._process_camera_estimation(feats, H, W, output)
+            output = self._process_camera_estimation(feats, H, W, output)
             if infer_gs:
                 output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
+            # Process segmentation head if available
+            if self.seg_head is not None:
+                output = self._process_segmentation_head(feats, x, H, W, output)
 
         # Extract auxiliary features if requested
         output.aux = self._extract_auxiliary_features(aux_feats, export_feat_layers, H, W)
@@ -158,6 +163,7 @@ class DepthAnything3Net(nn.Module):
                 output.ray_conf,
                 output.ray.shape[-3],
                 output.ray.shape[-2],
+                training = True
             )
             pred_extrinsic = affine_inverse(pred_extrinsic) # w2c -> c2w
             pred_extrinsic = pred_extrinsic[:, :, :3, :]
@@ -250,6 +256,42 @@ class DepthAnything3Net(nn.Module):
             gt_extrinsics=gt_extr,
         )
         output.gaussians = gs_world
+
+        return output
+
+    def _process_segmentation_head(
+        self,
+        feats: list[torch.Tensor],
+        x: torch.Tensor,
+        H: int,
+        W: int,
+        output: Dict[str, torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Process features through the segmentation head.
+
+        Passes backbone features through seg_head (SegDPT).
+        Returns pixel-level semantic predictions without confidence.
+
+        Args:
+            feats: List of features from backbone [B*N, T, C] for each layer
+            x: Input images (B, N, 3, H, W)
+            H: Image height
+            W: Image width
+            output: Current output dictionary
+
+        Returns:
+            Updated output dictionary with segmentation results
+        """
+        # Process through segmentation head (expects same format as depth head)
+        seg_output = self.seg_head(feats, H, W, patch_start_idx=0)
+
+        # Extract semantic from seg_output and assign directly to output
+        # SegDPT returns dict with head_name as key (default: "semantic")
+        # We extract it and assign like gaussians for direct access
+        head_name = getattr(self.seg_head, 'head_name', 'semantic')
+        if head_name in seg_output:
+            output.semantic = seg_output[head_name]
 
         return output
 

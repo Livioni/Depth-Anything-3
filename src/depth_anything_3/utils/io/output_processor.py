@@ -59,6 +59,7 @@ class OutputProcessor:
         intrinsics = self._extract_intrinsics(model_output)
         sky = self._extract_sky(model_output)
         aux = self._extract_aux(model_output)
+        semantic = self._extract_semantic(model_output)
         gaussians = model_output.get("gaussians", None)
         scale_factor = model_output.get("scale_factor", None)
 
@@ -70,6 +71,7 @@ class OutputProcessor:
             intrinsics=intrinsics,
             is_metric=getattr(model_output, "is_metric", 0),
             gaussians=gaussians,
+            semantic=semantic,
             aux=aux,
             scale_factor=scale_factor,
         )
@@ -146,6 +148,22 @@ class OutputProcessor:
         if sky is not None:
             sky = sky.squeeze(0).cpu().numpy() >= 0.5  # (N, H, W)
         return sky
+
+    def _extract_semantic(self, model_output: dict[str, torch.Tensor]) -> np.ndarray | None:
+            """
+            Extract semantic segmentation tensor from model output and convert to numpy.
+
+            Args:
+                model_output: Model output dictionary
+
+            Returns:
+                Semantic array with shape (N, C, H, W) or None
+            """
+            semantic = model_output.get("semantic", None)
+            if semantic is not None:
+                semantic = semantic.squeeze(0).cpu().numpy()  # (N, C, H, W)
+            return semantic
+
 
     def _extract_aux(self, model_output: dict[str, torch.Tensor]) -> AddictDict:
         """

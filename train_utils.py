@@ -339,11 +339,16 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
             "gradient_loss_fn": cfg.get("depth_gradient_loss_fn", "grad"),
             "valid_range": cfg.get("depth_valid_range", 0.98)
         },
+        ray={
+            "weight": cfg.get("ray_loss_weight", 1.0),
+            "loss_type": cfg.get("ray_loss_type", "l1")
+        }
     )
     
     logger.info("Loss criterion initialized:")
     logger.info(f"  Camera loss weight: {cfg.get('camera_loss_weight', 5.0)}")
     logger.info(f"  Depth loss weight: {cfg.get('depth_loss_weight', 1.0)}")
+    logger.info(f"  Ray loss weight: {cfg.get('ray_loss_weight', 1.0)}")
     
     return criterion
 

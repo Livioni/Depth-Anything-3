@@ -4,7 +4,7 @@
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Large"
+exp_name = "DA3-Large-Ray"
 logging_dir = "logs"
 
 # == Logging Configuration ==
@@ -24,7 +24,7 @@ backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
-use_gradient_checkpointing = False  # Enable gradient checkpointing to save memory
+use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 
 # == Training Configuration ==
 mixed_precision = "no"  # Options: "no", "fp16", "bf16"
@@ -63,6 +63,10 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 # Camera loss
 camera_loss_weight = 5.0
 camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
+
+# Ray Loss
+ray_loss_weight = 1.0
+ray_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
 # Depth loss
 depth_loss_weight = 1.0

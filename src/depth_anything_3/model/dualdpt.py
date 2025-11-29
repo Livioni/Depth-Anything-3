@@ -56,6 +56,7 @@ class DualDPT(nn.Module):
         aux_pyramid_levels: int = 4,
         aux_out1_conv_num: int = 5,
         head_names: Tuple[str, str] = ("depth", "ray"),
+        layer_indices: Tuple[int, int, int, int] = (0, 1, 2, 3),
     ) -> None:
         super().__init__()
 
@@ -72,8 +73,9 @@ class DualDPT(nn.Module):
         # names ONLY come from config (no hard-coded strings elsewhere)
         self.head_main, self.head_aux = head_names
 
-        # Always expect 4 scales; enforce intermediate idx = (0, 1, 2, 3)
-        self.intermediate_layer_idx: Tuple[int, int, int, int] = (0, 1, 2, 3)
+        # Configurable layer indices to select from feats list
+        # Default (0, 1, 2, 3) means use feats[0], feats[1], feats[2], feats[3]
+        self.intermediate_layer_idx: Tuple[int, int, int, int] = layer_indices
 
         # -------------------- token pre-norm + per-stage projection --------------------
         self.norm = nn.LayerNorm(dim_in)
