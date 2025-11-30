@@ -151,6 +151,22 @@ def predictions_to_ply(
     point_cloud_data.export(output_filename)
     print(f"Point cloud saved to {output_filename}.")
 
+def denormalize_images(prediction):
+    """Add processed images to prediction for visualization."""
+    processed_imgs = prediction['images']  # (N, 3, H, W)
+    # Transpose to channel-last format for denormalization
+    processed_imgs = np.transpose(processed_imgs, (0, 2, 3, 1))  # (N, H, W, 3)
+    # Denormalize from ImageNet normalization
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+    processed_imgs = processed_imgs * std + mean
+    processed_imgs = np.clip(processed_imgs, 0, 1)
+    # Transpose back to original channel-first format
+    processed_imgs = np.transpose(processed_imgs, (0, 3, 1, 2))  # (N, 3, H, W)
+
+    prediction['images'] = processed_imgs
+    return prediction
+
 def predictions_to_glb(
     predictions,
     conf_thres=50.0,
@@ -189,6 +205,8 @@ def predictions_to_glb(
     if not isinstance(predictions, dict):
         raise ValueError("predictions must be a dictionary")
 
+    predictions = denormalize_images(predictions)
+    
     if conf_thres is None:
         conf_thres = 10.0
 
