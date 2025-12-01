@@ -342,7 +342,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         ray={
             "weight": cfg.get("ray_loss_weight", 1.0),
             "loss_type": cfg.get("ray_loss_type", "l1")
-        }
+        },
         seg_mask={
             "weight": cfg.get("seg_mask_loss_weight", 1.0),
             "delta_pull": cfg.get("seg_mask_delta_pull", 0.25),
