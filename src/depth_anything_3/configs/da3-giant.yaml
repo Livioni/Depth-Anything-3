@@ -45,27 +45,27 @@ cam_dec:
   dim_in: 3072
 
 
-# gs_head:
-#   __object__:
-#     path: depth_anything_3.model.gsdpt
-#     name: GSDPT
-#     args: as_params
+gs_head:
+  __object__:
+    path: depth_anything_3.model.gsdpt
+    name: GSDPT
+    args: as_params
 
-#   dim_in: *head_dim_in
-#   output_dim: 38  # should align with gs_adapter's setting, for gs params
-#   features: *head_features
-#   out_channels: *head_out_channels
+  dim_in: *head_dim_in
+  output_dim: 38  # should align with gs_adapter's setting, for gs params
+  features: *head_features
+  out_channels: *head_out_channels
 
 
-# gs_adapter:
-#   __object__:
-#     path: depth_anything_3.model.gs_adapter
-#     name: GaussianAdapter
-#     args: as_params
+gs_adapter:
+  __object__:
+    path: depth_anything_3.model.gs_adapter
+    name: GaussianAdapter
+    args: as_params
 
-#   sh_degree: 2
-#   pred_color: false  # predict SH coefficient if false
-#   pred_offset_depth: true
-#   pred_offset_xy: true
-#   gaussian_scale_min: 1e-5
-#   gaussian_scale_max: 30.0
+  sh_degree: 2
+  pred_color: false  # predict SH coefficient if false
+  pred_offset_depth: true
+  pred_offset_xy: true
+  gaussian_scale_min: 1e-5
+  gaussian_scale_max: 30.0

@@ -2,11 +2,14 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import time
-from src.datasets.scannetppv2 import Scannetppv2 # noqa
+import threading
+from typing import List
 import torchvision.transforms as T
 import torch.nn.functional as F
 from safetensors.torch import load_file
 from depth_anything_3.cfg import create_object, load_config
+from depth_anything_3.specs import Prediction
+from depth_anything_3.utils.export import export
 import viser
 import viser.transforms as viser_tf
 from src.utils.misc import select_first_batch
@@ -21,6 +24,150 @@ from visual_util import (
 
 NORMALIZE = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
+from src.datasets.scannetppv2 import Scannetppv2 # noqa
+
+
+def convert_outputs_to_prediction(
+    outputs: dict,
+    images: np.ndarray,
+    extrinsics: np.ndarray = None,
+    intrinsics: np.ndarray = None,
+) -> Prediction:
+    """
+    Convert model outputs to Prediction object for export.
+    
+    Args:
+        outputs: Model output dictionary containing depth, conf, extrinsics, intrinsics, etc.
+        images: Original images (N, H, W, 3) in range [0, 1]
+        extrinsics: Camera extrinsics (N, 3, 4) or (N, 4, 4)
+        intrinsics: Camera intrinsics (N, 3, 3)
+    
+    Returns:
+        Prediction object ready for export
+    """
+    # Extract depth and confidence
+    depth = outputs.depth.squeeze().detach().cpu().numpy()  # (N, H, W)
+    if len(depth.shape) == 2:
+        depth = depth[None, ...]  # Add batch dimension if single image
+    
+    conf = outputs.depth_conf.squeeze().detach().cpu().numpy()  # (N, H, W)
+    if len(conf.shape) == 2:
+        conf = conf[None, ...]
+    
+    # Extract extrinsics and intrinsics from outputs if not provided
+    if extrinsics is None:
+        extrinsics = outputs.extrinsics.squeeze().detach().cpu().numpy()  # (N, 3, 4)
+    if intrinsics is None:
+        intrinsics = outputs.intrinsics.squeeze().detach().cpu().numpy()  # (N, 3, 3)
+    
+    # Ensure extrinsics is (N, 4, 4)
+    if extrinsics.shape[-2:] == (3, 4):
+        N = extrinsics.shape[0]
+        extrinsics_4x4 = np.zeros((N, 4, 4))
+        extrinsics_4x4[:, :3, :] = extrinsics
+        extrinsics_4x4[:, 3, 3] = 1.0
+        extrinsics = extrinsics_4x4
+    
+    # Process images: convert to (N, H, W, 3) uint8
+    if images.shape[-1] != 3:  # If in (N, 3, H, W) format
+        images = images.transpose(0, 2, 3, 1)
+    processed_images = (np.clip(images, 0, 1) * 255).astype(np.uint8)
+    
+    gaussians = outputs.get("gaussians", None)
+    
+    # Create Prediction object
+    prediction = Prediction(
+        depth=depth,
+        is_metric=1,  # Assume metric depth
+        conf=conf,
+        extrinsics=extrinsics,
+        intrinsics=intrinsics,
+        processed_images=processed_images,
+        gaussians=gaussians,  # Will be populated if infer_gs=True
+        semantic=None,
+        aux={},
+    )
+    
+    return prediction
+
+
+def export_results(
+    prediction: Prediction,
+    export_format: str = "glb",
+    export_dir: str = "output",
+    # GLB export parameters
+    conf_thresh_percentile: float = 5.0,
+    num_max_points: int = 1_000_000,
+    show_cameras: bool = True,
+    # Feat_vis export parameters
+    feat_vis_fps: int = 15,
+    # GS export parameters
+    render_exts: np.ndarray = None,
+    render_ixts: np.ndarray = None,
+    render_hw: tuple = None,
+    # Other export parameters
+    **export_kwargs,
+):
+    """
+    Export prediction results based on api.py's _export_results logic.
+    
+    Args:
+        prediction: Prediction object containing depth, conf, extrinsics, etc.
+        export_format: Export format (mini_npz, npz, glb, ply, gs_ply, gs_video, depth_vis, feat_vis, colmap)
+                      Can combine multiple formats with '-' (e.g., "glb-npz")
+        export_dir: Directory to export results
+        conf_thresh_percentile: [GLB] Lower percentile for adaptive confidence threshold
+        num_max_points: [GLB] Maximum number of points in the point cloud
+        show_cameras: [GLB] Show camera wireframes in the exported scene
+        feat_vis_fps: [FEAT_VIS] Frame rate for output video
+        render_exts: [GS_VIDEO] Render camera extrinsics
+        render_ixts: [GS_VIDEO] Render camera intrinsics
+        render_hw: [GS_VIDEO] Render resolution (H, W)
+        **export_kwargs: Additional format-specific parameters
+    """
+    # Prepare export kwargs dictionary
+    kwargs = {}
+    
+    # Add GLB export parameters
+    if "glb" in export_format:
+        if "glb" not in kwargs:
+            kwargs["glb"] = {}
+        kwargs["glb"].update({
+            "conf_thresh_percentile": conf_thresh_percentile,
+            "num_max_points": num_max_points,
+            "show_cameras": show_cameras,
+        })
+    
+    # Add Feat_vis export parameters
+    if "feat_vis" in export_format:
+        if "feat_vis" not in kwargs:
+            kwargs["feat_vis"] = {}
+        kwargs["feat_vis"].update({
+            "fps": feat_vis_fps,
+        })
+    
+    # Add GS video export parameters
+    if "gs_video" in export_format:
+        if "gs_video" not in kwargs:
+            kwargs["gs_video"] = {}
+        kwargs["gs_video"].update({
+            "extrinsics": render_exts,
+            "intrinsics": render_ixts,
+            "out_image_hw": render_hw,
+        })
+    
+    # Merge with additional export_kwargs
+    for key, value in export_kwargs.items():
+        if key not in kwargs:
+            kwargs[key] = {}
+        kwargs[key].update(value)
+    
+    # Call the export function
+    start_time = time.time()
+    export(prediction, export_format, export_dir, **kwargs)
+    end_time = time.time()
+    print(f"Export to {export_format} completed in {end_time - start_time:.2f} seconds")
+    print(f"Results saved to: {export_dir}")
 
 def viser_wrapper(
     pred_dict: dict,
@@ -59,8 +206,8 @@ def viser_wrapper(
 
 
     images = pred_dict["images"]  # (S, 3, H, W)
-    # world_points_map = pred_dict["world_points"]  # (S, H, W, 3)
-    # conf_map = pred_dict["world_points_conf"]  # (S, H, W)
+    world_points_map = pred_dict.get("world_points", None)  # (S, H, W, 3)
+    conf_map = pred_dict.get("world_points_conf", None)  # (S, H, W)
 
     depth_map = pred_dict["depth"]  # (S, H, W, 1)
     depth_conf = pred_dict["depth_conf"]  # (S, H, W)
@@ -73,12 +220,15 @@ def viser_wrapper(
         world_points = unproject_depth_map_to_point_map(depth_map, extrinsics_cam, intrinsics_cam)
         conf = depth_conf
     else:
+        if world_points_map is None or conf_map is None:
+            raise ValueError("use_point_map=True but world_points or world_points_conf not provided in pred_dict")
         world_points = world_points_map
         conf = conf_map
 
-    # Apply sky segmentation if enabled
+    # Apply sky segmentation if enabled (placeholder - implement if needed)
     if mask_sky and image_folder is not None:
-        conf = apply_sky_segmentation(conf, image_folder)
+        # apply_sky_segmentation is not implemented, skipping
+        print("Warning: Sky segmentation requested but not implemented, skipping...")
 
     # Convert images from (S, 3, H, W) to (S, H, W, 3)
     # Then flatten everything for the point cloud
@@ -267,12 +417,20 @@ scannetppv2_dataset = Scannetppv2(
     z_far=10,
     seed=985)
 
-save_glb = False
+# ========== Configuration ==========
+# New export method (migrated from api.pyTrue
+viser_mode = False
+enable_new_export = True  # Enable new export functionality from api.py
+export_formats = "gs_video"  # Options: "mini_npz", "npz", "glb", "depth_vis", "feat_vis", "gs_ply", "gs_video", "colmap"
+                            # Combine multiple formats with '-': "glb-npz-depth_vis"
+export_dir = "outputs"
+# ===================================
+
 batch = scannetppv2_dataset[(0,0,4)]
 images = NORMALIZE(batch['images'])          # [B, N, 3, H, W]  tensor
 
-model = create_object(load_config("src/depth_anything_3/configs/da3-large-tri.yaml"))
-state_dict = load_file("checkpoints/da3-large/model.safetensors")
+model = create_object(load_config("src/depth_anything_3/configs/da3-giant.yaml"))
+state_dict = load_file("checkpoints/da3-giant/model.safetensors")
 for k in list(state_dict.keys()):
     if k.startswith('model.'):
         state_dict[k[6:]] = state_dict.pop(k)
@@ -311,10 +469,13 @@ input_intrinsics = batch['intrinsic'].clone()
 with torch.no_grad():
     if len(images.shape) == 4:
         images = images.unsqueeze(0)   # [B, N, 3, H, W]
+        
     outputs = model(
         x=images.to(device=device), 
         extrinsics=input_extrinsics.to(device=device),
         intrinsics=input_intrinsics.to(device=device),
+        use_ray_pose = False,
+        infer_gs = True,
     )
     
     outputs['images'] = batch['images'].numpy()   # add back original images
@@ -330,40 +491,47 @@ with torch.no_grad():
     predictions_0 = select_first_batch(outputs)
     get_world_points_from_depth(predictions_0)
     
-    # Convert predictions to GLB format
-    if save_glb:
-        glbscene = predictions_to_glb(
-            predictions_0,
-            conf_thres=1,
-            filter_by_frames='All',
-            mask_black_bg=False,
-            mask_white_bg=False,
-            show_cam=True,
-            mask_sky=False,
-            target_dir="output",
-            prediction_mode="Predicted Depth",
+    # ========== New Export Method (from api.py) ==========
+    if enable_new_export:
+        # Convert outputs to Prediction object
+        prediction = convert_outputs_to_prediction(
+            outputs=outputs,
+            images=batch['images'].numpy(),  # Original images (N, 3, H, W)
+            extrinsics=None,  # Will use from outputs
+            intrinsics=None,  # Will use from outputs
         )
-        glbscene.export(file_obj='test_scene.glb')
+        
+        # Export using the new export function
+        export_results(
+            prediction=prediction,
+            export_format=export_formats,  # e.g., "glb", "npz", "glb-npz", "depth_vis"
+            export_dir=export_dir,
+            conf_thresh_percentile=40.0,  # For GLB: filter bottom 40% confidence points
+            num_max_points=1_000_000,      # For GLB: max points in point cloud
+            show_cameras=True,             # For GLB: show camera frustums
+        )
+        print(f"✓ Exported to {export_dir} with format(s): {export_formats}")
     
     # pred_dict["extrinsics"] = batch['extrinsic']
     # pred_dict["intrinsics"] = batch['intrinsic']
     # pred_dict["world_points"] = batch['world_points']
     # pred_dict["depth"] = new_depths.squeeze()[...,None].detach().cpu().numpy()
     
-    part_feature = torch.from_numpy(predictions_0['feat'])
-    part_feature = F.normalize(part_feature, dim=3)
+    # part_feature = torch.from_numpy(predictions_0['feat'])
+    # part_feature = F.normalize(part_feature, dim=3)
 
-    # Generate PCA visualization
-    pred_spatial_pca_masks = apply_pca_colormap(part_feature)
-    save_pca_masks(pred_spatial_pca_masks, "visualizaitions", "colored_pca")
+    # # Generate PCA visualization
+    # pred_spatial_pca_masks = apply_pca_colormap(part_feature)
+    # save_pca_masks(pred_spatial_pca_masks, "visualizaitions", "colored_pca")
     
-viser_server = viser_wrapper(
-    pred_dict=pred_dict,
-    port=8079,
-    init_conf_threshold=10,
-    use_point_map=False,
-    background_mode=False,
-    mask_sky=False,
-    image_folder=None,
-)
-print("Visualization complete")
+if viser_mode:
+    viser_server = viser_wrapper(
+        pred_dict=pred_dict,
+        port=8079,
+        init_conf_threshold=10,
+        use_point_map=False,
+        background_mode=False,
+        mask_sky=False,
+        image_folder=None,
+    )
+    print("Visualization complete")

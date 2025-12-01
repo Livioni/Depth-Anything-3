@@ -150,19 +150,19 @@ class OutputProcessor:
         return sky
 
     def _extract_semantic(self, model_output: dict[str, torch.Tensor]) -> np.ndarray | None:
-            """
-            Extract semantic segmentation tensor from model output and convert to numpy.
+        """
+        Extract semantic segmentation tensor from model output and convert to numpy.
 
-            Args:
-                model_output: Model output dictionary
+        Args:
+            model_output: Model output dictionary
 
-            Returns:
-                Semantic array with shape (N, C, H, W) or None
-            """
-            semantic = model_output.get("semantic", None)
-            if semantic is not None:
-                semantic = semantic.squeeze(0).cpu().numpy()  # (N, C, H, W)
-            return semantic
+        Returns:
+            Semantic array with shape (N, C, H, W) or None
+        """
+        semantic = model_output.get("semantic", None)
+        if semantic is not None:
+            semantic = semantic.squeeze(0).cpu().numpy()  # (N, C, H, W)
+        return semantic
 
 
     def _extract_aux(self, model_output: dict[str, torch.Tensor]) -> AddictDict:
