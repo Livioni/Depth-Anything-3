@@ -15,9 +15,116 @@ import cv2
 import os
 import requests
 import torch
-
+from PIL import Image
 from src.utils.geometry import unproject_depth_map_to_point_map, closed_form_inverse_se3
 from src.utils.rotation import mat_to_quat
+
+
+def show_anns(masks, colors, borders=True, ax=None) -> np.ndarray:
+    """
+    show the annotations and return the RGBA canvas as numpy array
+    """
+    if len(masks) == 0:
+        return None
+
+    sorted_annot_and_color = sorted(
+        zip(masks, colors), key=(lambda x: x[0].sum()), reverse=True
+    )
+    H, W = sorted_annot_and_color[0][0].shape[0], sorted_annot_and_color[0][0].shape[1]
+
+    canvas = np.ones((H, W, 4))
+    canvas[:, :, 3] = 0  # set the alpha channel
+    contour_thickness = max(1, int(min(5, 0.01 * min(H, W))))
+    for mask, color in sorted_annot_and_color:
+        canvas[mask] = np.concatenate([color, [0.55]])
+        if borders:
+            contours, _ = cv2.findContours(
+                np.array(mask, dtype=np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE
+            )
+            cv2.drawContours(
+                canvas, contours, -1, (0.05, 0.05, 0.05, 1), thickness=contour_thickness
+            )
+
+    if ax is not None:
+        ax.imshow(canvas)
+    return canvas  # RGBA float32 in [0,1]
+
+def save_pca_masks(pca_masks: torch.Tensor, save_dir: str, subdir: str):
+    """Save PCA visualization masks."""
+    output_dir = os.path.join(save_dir, subdir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    N = pca_masks.shape[0]
+    for i in range(N):
+        color_img = Image.fromarray(
+            (pca_masks[i] * 255).cpu().numpy().astype(np.uint8),
+            mode="RGB"
+        )
+        color_img.save(os.path.join(output_dir, f"mask_colored_{i:03d}.png"))
+
+    print(f"PCA masks saved to {output_dir}")
+
+def apply_pca_colormap(image):
+    """通过PCA将一批特征图像转换为3通道RGB图像。
+
+    该函数处理形状为 (N, H, W, C) 的4D输入，其中N是
+    视图的数量。为了确保多视图的一致性，它会展平所有视图
+    以计算单个PCA变换，然后将输出重塑
+    以保留N个独立的视图。
+
+    此版本使用百分位归一化来增强对比度，使颜色映射更加鲜明。
+
+    Args:
+        image: 形状为 (N, H, W, C) 的特征图像4D张量。
+
+    Returns:
+        Tensor: 形状为 (N, H, W, 3) 的彩色图像4D张量。
+    """
+    # 1. 存储原始的多视图维度，并展平以便进行一致的PCA
+    n, h, w, c = image.shape
+    # 从 (N, H, W, C) 重塑为 (N*H*W, C)。
+    # 这会将所有视图中的所有像素连接成一个批次。
+    image_flat = image.reshape(-1, c)
+
+    # 2. 对所有视图的组合数据计算PCA
+    # 主成分 (v) 将代表整个数据集。为了结果更稳定，可以适当增加q的值。
+    _, _, v = torch.pca_lowrank(image_flat, q=min(c, 256))
+
+    # 3. 将数据投影到前3个主成分上
+    # 这会将C维特征转换为3维的“颜色”特征。
+    image_colored = torch.matmul(image_flat, v[:, :3])
+
+    # 4. 对每个通道进行百分位归一化以增强对比度
+    # 定义用于拉伸的百分位范围。
+    # 使用较低和较高的百分位（例如，2%和98%）有助于
+    # 忽略极端异常值，并增强主要数据范围内的对比度，
+    # 从而产生更“大”或更明显的颜色映射。
+    low_p = 0.02
+    high_p = 0.98
+
+    # 遍历每个颜色通道 (R, G, B)
+    for i in range(3):
+        channel = image_colored[:, i]
+        
+        # 计算低百分位和高百分位的值
+        v_low = torch.quantile(channel, low_p)
+        v_high = torch.quantile(channel, high_p)
+        
+        # 避免除以零（如果通道没有变化）
+        if v_high > v_low:
+            # 归一化通道：将 [v_low, v_high] 范围映射到 [0, 1]
+            image_colored[:, i] = (channel - v_low) / (v_high - v_low)
+        else:
+            # 如果没有变化，通道是恒定的，可以设为中间值（灰色）
+            image_colored[:, i] = 0.5
+
+    # 5. 将值裁剪到 [0, 1] 范围
+    # 这确保了百分位范围之外的值被裁剪为纯黑或纯白。
+    image_colored = torch.clamp(image_colored, 0, 1)
+    
+    # 6. 将着色后的数据重塑回原始的多视图格式
+    # 这会恢复N个独立的视图，将 (N*H*W, 3) 转换回 (N, H, W, 3)。
+    return image_colored.view(n, h, w, 3)
 
 def get_world_points_from_depth(predictions):
     # Convert tensors to numpy

@@ -1,7 +1,7 @@
 import glob, os, torch
 from depth_anything_3.api import DepthAnything3
 device = torch.device("cuda")
-model = DepthAnything3.from_pretrained("depth-anything/DA3-GIANT",force_download=True)
+model = DepthAnything3.from_pretrained("depth-anything/DA3-GIANT")
 model = model.to(device=device)
 example_path = "assets/examples/SOH"
 images = sorted(glob.glob(os.path.join(example_path, "*.png")))

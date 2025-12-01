@@ -475,7 +475,28 @@ def merge_dicts(dicts):
         if isinstance(values[0], np.ndarray):
             result[key] = np.concatenate(values, axis=0)
         elif isinstance(values[0], torch.Tensor):
-            result[key] = torch.cat(values, dim=0)
+            # Special handling for gt_mask which may have different number of instances
+            if key == 'gt_mask':
+                # gt_mask shape: (N, H, W, num_instances)
+                # Find max num_instances across all batches
+                max_instances = max(v.shape[-1] for v in values)
+
+                # Pad tensors to have same number of instances
+                padded_values = []
+                for v in values:
+                    if v.shape[-1] < max_instances:
+                        # Pad with zeros
+                        pad_shape = list(v.shape)
+                        pad_shape[-1] = max_instances - v.shape[-1]
+                        padding = torch.zeros(pad_shape, dtype=v.dtype, device=v.device)
+                        padded_v = torch.cat([v, padding], dim=-1)
+                        padded_values.append(padded_v)
+                    else:
+                        padded_values.append(v)
+
+                result[key] = torch.cat(padded_values, dim=0)
+            else:
+                result[key] = torch.cat(values, dim=0)
         elif isinstance(values[0], list):
             merged_list = []
             for sublist in values:

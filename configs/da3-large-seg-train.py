@@ -25,6 +25,7 @@ head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
 use_gradient_checkpointing = True  # Enable gradient checkpointing to save memory
+use_ray_pose = False
 
 # == Training Configuration ==
 mixed_precision = "no"  # Options: "no", "fp16", "bf16"

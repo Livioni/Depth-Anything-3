@@ -17,7 +17,7 @@ checkpointing_steps = 10000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-large-seg.yaml"
+model_config = "src/depth_anything_3/configs/da3-large-tri.yaml"
 model_checkpoint_path = "checkpoints/da3-large/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
@@ -25,6 +25,7 @@ head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
 use_gradient_checkpointing = True  # Enable gradient checkpointing to save memory
+use_ray_pose = False
 
 # == Training Configuration ==
 mixed_precision = "no"  # Options: "no", "fp16", "bf16"
@@ -93,6 +94,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Scannetppv2(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"20000 @ Infinigen(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 

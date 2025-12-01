@@ -1,21 +1,20 @@
+import os.path as osp
+import cv2, os
+import numpy as np
 import sys
 sys.path.append('.')
-import os
 import torch
 import numpy as np
-import os.path as osp
-import glob
-import cv2
-import random, math
+import glob, math
+import random
 from PIL import Image
 import json
 import joblib
-from tqdm import tqdm
 
 from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
-from src.utils.geometry import depthmap_to_absolute_camera_coordinates, depth_to_world_coords_points, closed_form_inverse_se3
-from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
 from src.datasets.utils.image_ranking import compute_ranking
+from src.utils.geometry import depth_to_world_coords_points, closed_form_inverse_se3
+from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
 from src.datasets.utils.misc import threshold_depth_map
 from src.utils.image import imread_cv2
 
@@ -26,32 +25,30 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 class Scannetppv2(BaseStereoViewDataset):
     def __init__(self,
                  dataset_location='/mnt/disk3.8-4/datasets/scannetppv2',
-                 use_cache = False,
                  dset='',
+                 use_cache=False,
                  use_augs=False,
-                 top_k = 256,
-                 z_far = 100,      
+                 top_k=256,
+                 z_far=100,
                  quick=False,
                  verbose=False,
                  specify=False,
-                 *args, 
+                 *args,
                  **kwargs
                  ):
 
         print('loading Scannetpp dataset...')
         super().__init__(*args, **kwargs)
+
+        # Initialize instance attributes
         self.dataset_label = 'Scannetppv2'
-        self.split = dset
-        self.verbose = verbose
+        self.use_cache = use_cache
+        self.dset = dset
         self.top_k = top_k
         self.specify = specify
         self.z_far = z_far
-
-        self.use_augs = use_augs
-        self.dset = dset
-        self.use_cache = use_cache
-
-        
+        self.verbose = verbose
+        # Initialize data containers
         self.full_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
@@ -63,28 +60,18 @@ class Scannetppv2(BaseStereoViewDataset):
         self.max_depths = []  # default max depth
         self.rank = dict()
 
-        self.subdirs = []
-        self.sequences = []
-        self.subdirs.append(os.path.join(dataset_location, dset))
-
-        for subdir in self.subdirs:
-            for seq in glob.glob(os.path.join(subdir, "*/")):
-                seq_name = seq.split('/')[-1]
-                self.sequences.append(seq)
-
-        self.sequences = sorted(self.sequences)
-        if self.verbose:
-            print(self.sequences)
-        print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset))
-        
-        ## load trajectories
-        print('loading trajectories...')
+        # Find sequences
+        self.sequences = sorted(glob.glob(os.path.join(dataset_location, dset, "*/")))
 
         if quick:
-           self.sequences = self.sequences[0:10] 
+           self.sequences = self.sequences[0:1]
+
+        if self.verbose:
+            print(self.sequences)
+        print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/scannetppv2_annotations'
+            dataset_location = '/mnt/disk3.8-4/annotations/scannetppv2_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -105,6 +92,7 @@ class Scannetppv2(BaseStereoViewDataset):
                 if self.verbose: 
                     print('seq', seq)
 
+                # sub_scenes = sub_scenes[:100] #数据太多了，每个物体只要50个
                 rgb_path = os.path.join(seq, 'images')
                 depth_path = os.path.join(seq,  'depth')
                 annotations_file_path = os.path.join(seq, 'scene_iphone_metadata.npz')
@@ -156,102 +144,79 @@ class Scannetppv2(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            # os.makedirs(f'annotations/scannetppv2_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/scannetppv2_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'annotations/scannetppv2_annotations/{dset}/depth_paths.json')
-            # joblib.dump(self.all_extrinsic, f'annotations/scannetppv2_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'annotations/scannetppv2_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'annotations/scannetppv2_annotations/{dset}/rankings.joblib')
+            # os.makedirs(f'/mnt/disk3.8-4/annotations/scannetppv2_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/disk3.8-4/annotations/scannetppv2_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/disk3.8-4/annotations/scannetppv2_annotations/{dset}/depth_paths.json')
+            # joblib.dump(self.all_extrinsic, f'/mnt/disk3.8-4/annotations/scannetppv2_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/disk3.8-4/annotations/scannetppv2_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'/mnt/disk3.8-4/annotations/scannetppv2_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
-
-    def _read_depthmap(self, depthpath, max_depth=None):
-        depthmap = imread_cv2(depthpath, cv2.IMREAD_UNCHANGED)
-        depthmap = (depthmap.astype(np.float32) / 65535) * np.nan_to_num(max_depth)
-        return depthmap
-
-    def txt_to_list(self, file_path):
-        result = []
-        try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                for line in file:
-                    result.append(line.strip())
-            return result
-        except FileNotFoundError:
-            print(f"未找到文件: {file_path}")
-        except Exception as e:
-            print(f"发生错误: {e}")
-        return []
 
     def _save_paths_to_json(self, paths, filename):
         path_dict = {i: path for i, path in enumerate(paths)}
         with open(filename, 'w') as f:
             json.dump(path_dict, f, indent=4)
-    
+
+    def _build_intrinsics_matrix(self, intrinsics):
+        """Build camera intrinsics matrix from parameters."""
+        fx, fy = intrinsics[2], intrinsics[3]
+        cx, cy = intrinsics[4], intrinsics[5]
+        return np.array([
+            [fx, 0,  cx],
+            [0,  fy, cy],
+            [0,  0,   1]
+        ], dtype=np.float32)
+
     def __len__(self):
         return len(self.full_idxs)
     
     def _get_views(self, index, num, resolution, rng):
+        # Get frame indices based on number of views needed
         if num != 1:
-            # get the top num frames of the anchor frame
             anchor_frame = self.full_idxs[index]
-            top_k = self.top_k if len(self.rank[anchor_frame]) >= self.top_k else len(self.rank[anchor_frame])
-            rest_frame = self.rank[anchor_frame][:top_k]
+            rest_frame = self.rank[anchor_frame][:min(self.top_k, len(self.rank[anchor_frame]))]
+
             if self.specify:
                 L = len(rest_frame) // 2
                 step = max(1, math.ceil(L / (num)))
                 idxs = list(range(step - 1, L, step))[:(num - 1)]
                 rest_frame_indexs = [rest_frame[i] for i in idxs]
                 if len(rest_frame_indexs) < (num - 1):
-                    rest_frame_indexs += [rest_frame[-1]]
+                    rest_frame_indexs.append(rest_frame[-1])
             else:
-                rest_frame_indexs = np.random.choice(list(rest_frame), size=num-1, replace=True).tolist()    
-            full_idx = [anchor_frame] + rest_frame_indexs  # 用 list 替代 tuple
-            
-            rgb_paths = [self.all_rgb_paths[i] for i in full_idx]
-            depth_paths = [self.all_depth_paths[i] for i in full_idx]
-            extrinsics = [self.all_extrinsic[i] for i in full_idx]
-            intrinsics = [self.all_intrinsic[i] for i in full_idx]
-            
-    
+                rest_frame_indexs = np.random.choice(rest_frame, size=num-1, replace=True).tolist()
+
+            full_idx = [anchor_frame] + rest_frame_indexs
         else:
-            full_index = self.full_idxs[index]
-            rgb_paths = [self.all_rgb_paths[full_index]]
-            depth_paths = [self.all_depth_paths[full_index]]
-            extrinsics = [self.all_extrinsic[full_index]]
-            intrinsics = [self.all_intrinsic[full_index]]
+            full_idx = [self.full_idxs[index]]
+
+        # Extract paths and camera parameters for selected frames
+        rgb_paths = [self.all_rgb_paths[i] for i in full_idx]
+        depth_paths = [self.all_depth_paths[i] for i in full_idx]
+        camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
+        intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
 
         views = []
-        for i in range(num):
-            
-            impath = rgb_paths[i]
-            depthpath = depth_paths[i]
+        for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
+            # Load and preprocess images
+            rgb_image = Image.open(impath).convert("RGB")
+            depthmap = imread_cv2(depthpath, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000
+            depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
 
+            rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
+                rgb_image, depthmap, intrinsics, resolution, rng, info=impath)
 
-            # load camera params
-            extrinsic = extrinsics[i]
-            intrinsic = intrinsics[i]
+            # Create view dictionary
+            views.append({
+                'img': rgb_image,
+                'depthmap': depthmap,
+                'camera_pose': camera_pose,  # cam2world
+                'camera_intrinsics': intrinsics,
+                'dataset': self.dataset_label,
+                'label': impath.split('/')[-3],
+                'instance': osp.basename(impath),
+            })
 
-            # load image and depth
-            rgb_image = Image.open(impath)
-            rgb_image = rgb_image.convert("RGB")
-            depthmap = imread_cv2(depthpath, cv2.IMREAD_UNCHANGED)
-            depthmap = depthmap.astype(np.float32) / 1000
-            depthmap[~np.isfinite(depthmap)] = 0  # invalid
-            
-            rgb_image, depthmap, intrinsic = self._crop_resize_if_necessary(
-                rgb_image, depthmap, intrinsic, resolution, rng=rng, info=impath)
-                      
-            
-            views.append(dict(
-                img=rgb_image,
-                depthmap=depthmap,
-                camera_pose=extrinsic,
-                camera_intrinsics=intrinsic,
-                dataset=self.dataset_label,
-                label=rgb_paths[i].split('/')[-3],
-                instance=osp.split(rgb_paths[i])[1],
-            ))
-            
         return views
     
     def __getitem__(self, idx):
@@ -325,56 +290,34 @@ class Scannetppv2(BaseStereoViewDataset):
             # this allows to check whether the RNG is is the same state each time
             view['rng'] = int.from_bytes(self._rng.bytes(4), 'big')
             
-        # Initialize lists to store concatenated data for each field
-        img_list = []
-        depthmap_list = []
-        camera_pose_list = []
-        camera_intrinsics_list = []
-        pts3d_list = []
-        true_shape_list = []
-        valid_mask_list = []
-        label_list = []
-        instance_list = []
+        # Define field mappings for data collection and stacking
+        field_config = {
+            'img': ('images', torch.stack),
+            'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
+            'camera_intrinsics': ('intrinsic', np.stack),
+            'world_coords_points': ('world_points', np.stack),
+            'true_shape': ('true_shape', np.array),
+            'point_mask': ('valid_mask', np.stack),
+            'label': ('label', lambda x: x),  # Keep as list
+            'instance': ('instance', lambda x: x),  # Keep as list
+        }
 
-        # Iterate over the views and concatenate each field
-        for view in views:
-            img_list.append(view['img'])
-            depthmap_list.append(view['depthmap'][:, :, np.newaxis])
-            camera_pose_list.append(view['camera_pose'][:3])
-            camera_intrinsics_list.append(view['camera_intrinsics'])
-            pts3d_list.append(view['world_coords_points'])
-            true_shape_list.append(view['true_shape'])
-            valid_mask_list.append(view['point_mask'])
-            label_list.append(view['label'])
-            instance_list.append(view['instance'])
+        # Collect and stack data using list comprehensions and field config
+        result = {}
+        for field_key, (output_key, stack_func, *input_keys) in field_config.items():
+            input_key = input_keys[0] if input_keys else field_key
+            data_list = [view[input_key] for view in views]
+            result[output_key] = stack_func(data_list)
 
-        # Concatenate the lists along the first dimension (n)
-        img = torch.stack(img_list)
-        depthmap = np.stack(depthmap_list)
-        camera_pose = np.stack(camera_pose_list)
-        camera_intrinsics = np.stack(camera_intrinsics_list)
-        pts3d = np.stack(pts3d_list)
-        true_shape = np.array(true_shape_list)
-        valid_mask = np.stack(valid_mask_list)
-           
+        # Add dataset label
+        result['dataset'] = self.dataset_label
 
-        return dict(
-                images=img, #(n, c, h, w)
-                depth=depthmap, #(n, h, w, 1)
-                extrinsic=camera_pose, #(n, 3, 4)
-                intrinsic=camera_intrinsics, #(n, 3, 3)
-                dataset=self.dataset_label,
-                label=label_list,
-                instance=instance_list,
-                world_points=pts3d, #(n, h, w, 3)
-                true_shape=true_shape,
-                valid_mask=valid_mask,)
+        return result
 
 if __name__ == "__main__":
-    from src.datasets.base.base_stereo_view_dataset import view_name
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
-    import random
 
     dataset_location = '/mnt/disk3.8-4/datasets/scannetppv2'  # Change this to the correct path
     dset = ''
@@ -408,10 +351,10 @@ if __name__ == "__main__":
     dataset = Scannetppv2(
         dataset_location=dataset_location,
         dset = dset,
-        use_cache = False,
+        use_cache = True,
         use_augs=use_augs,
         top_k = 256,
-        quick=True,
+        quick=False,
         verbose=True,
         resolution=[(518,378)], 
         aug_crop=16,
@@ -426,7 +369,3 @@ if __name__ == "__main__":
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
     # visualize_scene((2000,0,num_views))
-    # for i in range(len(dataset)):
-    #     batch = dataset[(i, 0, 4)]
-    #     if batch['intrinsic'][0,0,0] == 0:
-    #         print("Error: Intrinsics are zero.")

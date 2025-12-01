@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 from einops import einsum
 
-from utils.geometry import closed_form_inverse_se3
+from src.utils.geometry import closed_form_inverse_se3
 
 
 def as_homogeneous(ext):

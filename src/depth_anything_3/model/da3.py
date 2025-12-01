@@ -110,7 +110,7 @@ class DepthAnything3Net(nn.Module):
         intrinsics: torch.Tensor | None = None,
         export_feat_layers: list[int] | None = [],
         infer_gs: bool = False,
-        use_ray_pose: bool = True,
+        use_ray_pose: bool = False,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the network.
@@ -140,11 +140,14 @@ class DepthAnything3Net(nn.Module):
         # Process features through depth head
         with torch.autocast(device_type=x.device.type, enabled=False):
             output = self._process_depth_head(feats, H, W)
-            output = self._process_camera_estimation(feats, H, W, output)
+            if use_ray_pose:
+                output = self._process_ray_pose_estimation(output, H, W)
+            else:
+                output = self._process_camera_estimation(feats, H, W, output)
             if infer_gs:
                 output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
             # Process segmentation head if available
-            if self.seg_head is not None:
+            if self.seg_head:
                 output = self._process_segmentation_head(feats, x, H, W, output)
 
         # Extract auxiliary features if requested

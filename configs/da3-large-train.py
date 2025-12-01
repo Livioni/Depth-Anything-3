@@ -12,8 +12,8 @@ wandb = False
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 1000
-checkpointing_steps = 10000
+num_save_visual = 2000
+checkpointing_steps = 20000
 save_each_epoch = False
 
 # == Model Configuration ==
@@ -25,11 +25,12 @@ head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
+use_ray_pose = False
 
 # == Training Configuration ==
 mixed_precision = "no"  # Options: "no", "fp16", "bf16"
 seed = 42
-num_train_epochs = 5
+num_train_epochs = 10
 gradient_accumulation_steps = 2
 max_grad_norm = 1.0
 drop_prob = 0.1

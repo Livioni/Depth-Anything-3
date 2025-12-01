@@ -343,6 +343,12 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
             "weight": cfg.get("ray_loss_weight", 1.0),
             "loss_type": cfg.get("ray_loss_type", "l1")
         }
+        seg_mask={
+            "weight": cfg.get("seg_mask_loss_weight", 1.0),
+            "delta_pull": cfg.get("seg_mask_delta_pull", 0.25),
+            "delta_push": cfg.get("seg_mask_delta_push", 1.0),
+            "min_mask_pixels": cfg.get("seg_mask_min_mask_pixels", 50)
+        }
     )
     
     logger.info("Loss criterion initialized:")

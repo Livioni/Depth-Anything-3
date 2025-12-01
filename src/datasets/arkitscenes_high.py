@@ -1,11 +1,3 @@
-# Copyright (C) 2024-present Naver Corporation. All rights reserved.
-# Licensed under CC BY-NC-SA 4.0 (non-commercial use only).
-#
-# --------------------------------------------------------
-# Dataloader for preprocessed arkitscenes
-# dataset at https://github.com/apple/ARKitScenes - Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International Public License https://github.com/apple/ARKitScenes/tree/main?tab=readme-ov-file#license
-# See datasets_preprocess/preprocess_arkitscenes.py
-# --------------------------------------------------------
 import os.path as osp
 import cv2,os
 import numpy as np
@@ -19,11 +11,11 @@ from PIL import Image
 import json
 import joblib
 
-from vggt.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
-from vggt.datasets.utils.image_ranking import compute_ranking
-from vggt.utils.geometry import depth_to_world_coords_points,closed_form_inverse_se3
-from vggt.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
-from vggt.datasets.utils.misc import threshold_depth_map
+from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
+from src.datasets.utils.image_ranking import compute_ranking
+from src.utils.geometry import depth_to_world_coords_points,closed_form_inverse_se3
+from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
+from src.datasets.utils.misc import threshold_depth_map
 
 class ARKitScenesHigh(BaseStereoViewDataset):
     def __init__(self,
@@ -43,20 +35,19 @@ class ARKitScenesHigh(BaseStereoViewDataset):
 
         print('loading ARKitScenesHight dataset...')
         super().__init__(*args, **kwargs)
-        
+
+        # Initialize instance attributes
         self.dataset_label = 'ARKitScenesHigh'
-        self.split = dset
+        self.dset = dset
         self.top_k = top_k
         self.res = res
         self.specify = specify
         self.z_far = z_far
-        
         self.verbose = verbose
-
         self.use_augs = use_augs
-        self.dset = dset
         self.use_cache = use_cache
 
+        # Initialize data containers
         self.full_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
@@ -66,16 +57,9 @@ class ARKitScenesHigh(BaseStereoViewDataset):
         self.all_annotation_paths = []
         self.sky_directions = []
         self.rank = dict()
-        
-        self.subdirs = []
-        self.sequences = []
-        self.subdirs.append(os.path.join(dataset_location, dset))
 
-        for subdir in self.subdirs:
-            for seq in glob.glob(os.path.join(subdir, "*/")):
-                self.sequences.append(seq)
-
-        self.sequences = sorted(self.sequences)
+        # Find sequences
+        self.sequences = sorted(glob.glob(os.path.join(dataset_location, dset, "*/")))
         
         if quick:
            self.sequences = self.sequences[0:1] 
@@ -107,7 +91,6 @@ class ARKitScenesHigh(BaseStereoViewDataset):
                 if self.verbose: 
                     print('seq', seq)
 
-                scene_path = seq.split("/")[-2]
                 rgb_path = os.path.join(seq, 'vga_wide')
                 if self.res == 'low':
                     depth_path = os.path.join(seq, 'lowres_depth') 
@@ -143,12 +126,12 @@ class ARKitScenesHigh(BaseStereoViewDataset):
                 for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
                     self.rank[i] = ranking[ind] 
                     
-            # os.makedirs(f'annotations/arkitsceneHigh_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/arkitsceneHigh_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'annotations/arkitsceneHigh_annotations/{dset}/depth_paths.json')
-            # joblib.dump(self.all_extrinsic, f'annotations/arkitsceneHigh_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'annotations/arkitsceneHigh_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'annotations/arkitsceneHigh_annotations/{dset}/rankings.joblib')
+            os.makedirs(f'annotations/arkitsceneHigh_annotations/{dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/arkitsceneHigh_annotations/{dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/arkitsceneHigh_annotations/{dset}/depth_paths.json')
+            joblib.dump(self.all_extrinsic, f'annotations/arkitsceneHigh_annotations/{dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/arkitsceneHigh_annotations/{dset}/intrinsics.joblib')
+            joblib.dump(self.rank, f'annotations/arkitsceneHigh_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
     
     def _save_paths_to_json(self, paths, filename):
@@ -156,96 +139,81 @@ class ARKitScenesHigh(BaseStereoViewDataset):
         with open(filename, 'w') as f:
             json.dump(path_dict, f, indent=4)
 
+    def _build_intrinsics_matrix(self, intrinsics):
+        """Build camera intrinsics matrix from parameters."""
+        fx, fy = intrinsics[2], intrinsics[3]
+        cx, cy = intrinsics[4], intrinsics[5]
+        return np.array([
+            [fx, 0,  cx],
+            [0,  fy, cy],
+            [0,  0,   1]
+        ], dtype=np.float32)
+
     def __len__(self):
         return len(self.full_idxs)
 
     def _get_views(self, index, num, resolution, rng):
+        # Get frame indices based on number of views needed
         if num != 1:
-            # get the top num frames of the anchor frame
             anchor_frame = self.full_idxs[index]
-            top_k = self.top_k if len(self.rank[anchor_frame]) > self.top_k else len(self.rank[anchor_frame])
-            rest_frame = self.rank[anchor_frame][:top_k]
+            rest_frame = self.rank[anchor_frame][:min(self.top_k, len(self.rank[anchor_frame]))]
+
             if self.specify:
                 L = len(rest_frame)
                 step = max(1, math.floor(L / (num)))
                 idxs = list(range(step - 1, L, step))[:(num - 1)]
                 rest_frame_indexs = [rest_frame[i] for i in idxs]
                 if len(rest_frame_indexs) < (num - 1):
-                    rest_frame_indexs += [rest_frame[-1]]
+                    rest_frame_indexs.append(rest_frame[-1])
             else:
-                rest_frame_indexs = np.random.choice(list(rest_frame), size=num-1, replace=True).tolist()  
-            full_idx = [anchor_frame] + rest_frame_indexs  
-            
-            rgb_paths = [self.all_rgb_paths[i] for i in full_idx]
-            depth_paths = [self.all_depth_paths[i] for i in full_idx]
-            camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
-            intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
-            
+                rest_frame_indexs = np.random.choice(rest_frame, size=num-1, replace=True).tolist()
+
+            full_idx = [anchor_frame] + rest_frame_indexs
         else:
-            full_idx = self.full_idxs[index]
-            rgb_paths = [self.all_rgb_paths[full_idx]]
-            depth_paths = [self.all_depth_paths[full_idx]]
-            camera_pose_list = [self.all_extrinsic[full_idx]]
-            intrinsics_list = [self.all_intrinsic[full_idx]]
+            full_idx = [self.full_idxs[index]]
+
+        # Extract paths and camera parameters for selected frames
+        rgb_paths = [self.all_rgb_paths[i] for i in full_idx]
+        depth_paths = [self.all_depth_paths[i] for i in full_idx]
+        camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
+        intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
 
 
         views = []
-        for i in range(num):
-            impath = rgb_paths[i]
-            depthpath = depth_paths[i]
-            camera_pose = camera_pose_list[i]
-            intrinsics = intrinsics_list[i]
+        for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
+            # Build camera intrinsics matrix
+            K = self._build_intrinsics_matrix(intrinsics)
 
-            fx, fy = intrinsics[2], intrinsics[3]
-            cx, cy = intrinsics[4], intrinsics[5]
-
-            # 构造内参矩阵
-            K = np.array([
-                [fx, 0,  cx],
-                [0,  fy, cy],
-                [0,  0,   1]
-            ], dtype=np.float32)
-            ori_camera_pose = camera_pose_list[i]
-            ori_intrinsics = K
-            
-            rgb_image = Image.open(impath)
-            rgb_image = rgb_image.convert("RGB")
+            # Load and preprocess images
+            rgb_image = Image.open(impath).convert("RGB")
             depthmap = cv2.imread(depthpath, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000
-            depthmap[~np.isfinite(depthmap)] = 0  # invalid
+            depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
 
             depthmap = threshold_depth_map(depthmap, max_percentile=99, min_percentile=-1)
-
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, K, resolution, rng, info=impath)
 
-            views.append(dict(
-                img=rgb_image,
-                ori_image_path=impath,
-                ori_depth_path=depthpath,
-                ori_camera_pose=ori_camera_pose,
-                ori_intrinsics=ori_intrinsics,
-                depthmap=depthmap,
-                camera_pose=camera_pose,  # cam2world
-                camera_intrinsics=intrinsics,
-                dataset=self.dataset_label,
-                label=rgb_paths[i].split('/')[-2],
-                instance=osp.split(rgb_paths[i])[1],
-                ))
+            # Create view dictionary
+            views.append({
+                'img': rgb_image,
+                'depthmap': depthmap,
+                'camera_pose': camera_pose,  # cam2world
+                'camera_intrinsics': intrinsics,
+                'dataset': self.dataset_label,
+                'label': impath.split('/')[-2],
+                'instance': osp.basename(impath),
+            })
 
         return views
     
     def __getitem__(self, idx):
+        # Parse index tuple: (idx, ar_idx[, num])
         if isinstance(idx, tuple):
-            if len(idx) == 2:
-                # the idx is specifying the aspect-ratio
-                idx, ar_idx = idx
-                num = 1
-            else:
-                idx, ar_idx, num = idx
+            idx, ar_idx, *num_args = idx
+            num = num_args[0] if num_args else 1
         else:
             assert len(self._resolutions) == 1
-            num = 1
-            ar_idx = 0
+            ar_idx, num = 0, 1
 
         # set-up the rng
         if self.seed:  # reseed for each __getitem__
@@ -259,39 +227,35 @@ class ARKitScenesHigh(BaseStereoViewDataset):
         views = self._get_views(idx, num, resolution, self._rng)
         assert len(views) == num
 
-        # check data-types
+        # Process each view
         for v, view in enumerate(views):
-            assert 'pts3d' not in view, f"pts3d should not be there, they will be computed afterwards based on intrinsics+depthmap for view {view_name(view)}"
-            view['idx'] = (idx, ar_idx, v)
+            # Basic assertions
+            assert 'pts3d' not in view and 'valid_mask' not in view, \
+                f"pts3d/valid_mask should not be present in view {view_name(view)}"
+            assert 'camera_intrinsics' in view
+            assert np.isfinite(view['depthmap']).all(), f'NaN in depthmap for view {view_name(view)}'
 
-            # encode the image
-            width, height = view['img'].size
-            view['true_shape'] = np.int32((height, width))
+            # Set view metadata
+            view['idx'] = (idx, ar_idx, v)
+            view['z_far'] = self.z_far
+            view['true_shape'] = np.int32(view['img'].size[::-1])  # (height, width)
             view['img'] = self.transform(view['img'])
 
-            assert 'camera_intrinsics' in view
+            # Handle camera pose
             if 'camera_pose' not in view:
                 view['camera_pose'] = np.full((4, 4), np.nan, dtype=np.float32)
             else:
                 assert np.isfinite(view['camera_pose']).all(), f'NaN in camera pose for view {view_name(view)}'
-            assert 'pts3d' not in view
-            assert 'valid_mask' not in view
-            assert np.isfinite(view['depthmap']).all(), f'NaN in depthmap for view {view_name(view)}'
-            view['z_far'] = self.z_far
-            # pts3d, valid_mask = depthmap_to_absolute_camera_coordinates(**view)
 
-            # view['world_coords_points'] = pts3d
-            # view['point_mask'] = valid_mask & np.isfinite(pts3d).all(axis=-1)
-
-            # check all datatypes
+            # Validate data types
             for key, val in view.items():
                 res, err_msg = is_good_type(key, val)
                 assert res, f"{err_msg} with {key}={val} for view {view_name(view)}"
-            K = view['camera_intrinsics']
-            
+
+            # Compute 3D coordinates
             view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
-            world_coords_points, cam_coords_points, point_mask = (
-                depth_to_world_coords_points(view['depthmap'], view['camera_pose'], view["camera_intrinsics"], z_far = self.z_far)
+            world_coords_points, cam_coords_points, point_mask = depth_to_world_coords_points(
+                view['depthmap'], view['camera_pose'], view['camera_intrinsics'], z_far=self.z_far
             )
             view['world_coords_points'] = world_coords_points
             view['cam_coords_points'] = cam_coords_points
@@ -305,73 +269,35 @@ class ARKitScenesHigh(BaseStereoViewDataset):
             # this allows to check whether the RNG is is the same state each time
             view['rng'] = int.from_bytes(self._rng.bytes(4), 'big')
             
-        # Initialize lists to store concatenated data for each field
-        img_list = []
-        depthmap_list = []
-        camera_pose_list = []
-        camera_intrinsics_list = []
-        pts3d_list = []
-        true_shape_list = []
-        valid_mask_list = []
-        label_list = []
-        instance_list = []
-        #
-        ori_image_path_list = []
-        ori_depth_path_list = []
-        ori_camera_pose_list = []
-        ori_intrinsics_list = []
+        # Define field mappings for data collection and stacking
+        field_config = {
+            'img': ('images', torch.stack),
+            'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
+            'camera_intrinsics': ('intrinsic', np.stack),
+            'world_coords_points': ('world_points', np.stack),
+            'true_shape': ('true_shape', np.array),
+            'point_mask': ('valid_mask', np.stack),
+            'label': ('label', lambda x: x),  # Keep as list
+            'instance': ('instance', lambda x: x),  # Keep as list
+        }
 
-        # Iterate over the views and concatenate each field
-        for view in views:
-            img_list.append(view['img'])
-            depthmap_list.append(view['depthmap'][:, :, np.newaxis])
-            camera_pose_list.append(view['camera_pose'][:3])
-            camera_intrinsics_list.append(view['camera_intrinsics'])
-            pts3d_list.append(view['world_coords_points'])
-            true_shape_list.append(view['true_shape'])
-            valid_mask_list.append(view['point_mask'])
-            label_list.append(view['label'])
-            instance_list.append(view['instance'])
-            #
-            ori_image_path_list.append(view['ori_image_path'])
-            ori_depth_path_list.append(view['ori_depth_path'])
-            ori_camera_pose_list.append(view['ori_camera_pose'])
-            ori_intrinsics_list.append(view['ori_intrinsics'])
+        # Collect and stack data using list comprehensions and field config
+        result = {}
+        for field_key, (output_key, stack_func, *input_keys) in field_config.items():
+            input_key = input_keys[0] if input_keys else field_key
+            data_list = [view[input_key] for view in views]
+            result[output_key] = stack_func(data_list)
 
-        # Concatenate the lists along the first dimension (n)
-        img = torch.stack(img_list)
-        depthmap = np.stack(depthmap_list)
-        camera_pose = np.stack(camera_pose_list)
-        camera_intrinsics = np.stack(camera_intrinsics_list)
-        pts3d = np.stack(pts3d_list)
-        true_shape = np.array(true_shape_list)
-        valid_mask = np.stack(valid_mask_list)   
-        #
-        ori_camera_pose = np.array(ori_camera_pose_list)
-        ori_intrinsics = np.array(ori_intrinsics_list) 
+        # Add dataset label
+        result['dataset'] = self.dataset_label 
 
-        return dict(
-                images=img, #(n, c, h, w)
-                depth=depthmap, #(n, h, w, 1)
-                extrinsic=camera_pose, #(n, 3, 4)
-                intrinsic=camera_intrinsics, #(n, 3, 3)
-                dataset=self.dataset_label,
-                label=label_list,
-                instance=instance_list,
-                world_points=pts3d, #(n, h, w, 3)
-                true_shape=true_shape,
-                valid_mask=valid_mask,
-                #
-                ori_image_path=ori_image_path_list,
-                ori_depth_path=ori_depth_path_list,
-                ori_camera_pose=ori_camera_pose,
-                ori_intrinsics=ori_intrinsics,)
+        return result
 
 
 if __name__ == "__main__":
-    from vggt.viz import SceneViz, auto_cam_size
-    from vggt.utils.image import rgb
-
+    from src.viz import SceneViz, auto_cam_size
+    from src.utils.image import rgb
 
     num_views = 12
     use_augs = False

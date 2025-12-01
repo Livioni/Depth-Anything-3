@@ -235,7 +235,7 @@ if __name__ == '__main__':
         for step, batch in enumerate(train_dataloader):
             # Merge batch dictionaries
             batch = merge_dicts(batch)
-            
+            use_ray_pose = cfg.get("use_ray_pose", False)
             # Normalize camera extrinsics and points
             new_extrinsics, _, new_world_points, new_depths = normalize_camera_extrinsics_and_points_batch(
                 extrinsics=batch['extrinsic'],
@@ -260,9 +260,10 @@ if __name__ == '__main__':
                 if use_pose:
                     predictions = model(x=batch['images'], 
                                         extrinsics=extra_input_extrinsic_gt, 
-                                        intrinsics=batch['intrinsic'])
+                                        intrinsics=batch['intrinsic'],
+                                        use_ray_pose=use_ray_pose)
                 else:
-                    predictions = model(x=batch['images'])
+                    predictions = model(x=batch['images'], use_ray_pose=use_ray_pose)
             
             # Compute loss (disable autocast for loss computation)
             loss_details = {}

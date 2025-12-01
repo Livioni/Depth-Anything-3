@@ -4,6 +4,7 @@ from tqdm import tqdm
 import time
 from src.datasets.scannetppv2 import Scannetppv2 # noqa
 import torchvision.transforms as T
+import torch.nn.functional as F
 from safetensors.torch import load_file
 from depth_anything_3.cfg import create_object, load_config
 import viser
@@ -12,6 +13,8 @@ from src.utils.misc import select_first_batch
 from src.utils.geometry import closed_form_inverse_se3, unproject_depth_map_to_point_map
 from src.train_utils.normalization import normalize_camera_extrinsics_and_points_batch
 from visual_util import (
+    apply_pca_colormap,
+    save_pca_masks,
     predictions_to_glb,
     get_world_points_from_depth,
 )
@@ -254,7 +257,7 @@ def viser_wrapper(
     return server
 
 scannetppv2_dataset = Scannetppv2(
-    use_cache = True,
+    use_cache = False,
     top_k = 64,
     quick=True,
     verbose=False,
@@ -264,11 +267,12 @@ scannetppv2_dataset = Scannetppv2(
     z_far=10,
     seed=985)
 
+save_glb = False
 batch = scannetppv2_dataset[(0,0,4)]
 images = NORMALIZE(batch['images'])          # [B, N, 3, H, W]  tensor
 
-model = create_object(load_config("src/depth_anything_3/configs/da3-giant.yaml"))
-state_dict = load_file("checkpoints/da3-giant/model.safetensors")
+model = create_object(load_config("src/depth_anything_3/configs/da3-large-tri.yaml"))
+state_dict = load_file("checkpoints/da3-large/model.safetensors")
 for k in list(state_dict.keys()):
     if k.startswith('model.'):
         state_dict[k[6:]] = state_dict.pop(k)
@@ -327,23 +331,31 @@ with torch.no_grad():
     get_world_points_from_depth(predictions_0)
     
     # Convert predictions to GLB format
-    # glbscene = predictions_to_glb(
-    #     predictions_0,
-    #     conf_thres=1,
-    #     filter_by_frames='All',
-    #     mask_black_bg=False,
-    #     mask_white_bg=False,
-    #     show_cam=True,
-    #     mask_sky=False,
-    #     target_dir="output",
-    #     prediction_mode="Predicted Depth",
-    # )
-    # glbscene.export(file_obj='test_scene.glb')
+    if save_glb:
+        glbscene = predictions_to_glb(
+            predictions_0,
+            conf_thres=1,
+            filter_by_frames='All',
+            mask_black_bg=False,
+            mask_white_bg=False,
+            show_cam=True,
+            mask_sky=False,
+            target_dir="output",
+            prediction_mode="Predicted Depth",
+        )
+        glbscene.export(file_obj='test_scene.glb')
     
     # pred_dict["extrinsics"] = batch['extrinsic']
     # pred_dict["intrinsics"] = batch['intrinsic']
     # pred_dict["world_points"] = batch['world_points']
     # pred_dict["depth"] = new_depths.squeeze()[...,None].detach().cpu().numpy()
+    
+    part_feature = torch.from_numpy(predictions_0['feat'])
+    part_feature = F.normalize(part_feature, dim=3)
+
+    # Generate PCA visualization
+    pred_spatial_pca_masks = apply_pca_colormap(part_feature)
+    save_pca_masks(pred_spatial_pca_masks, "visualizaitions", "colored_pca")
     
 viser_server = viser_wrapper(
     pred_dict=pred_dict,

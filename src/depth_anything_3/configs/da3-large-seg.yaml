@@ -13,9 +13,9 @@ net:
   # 提取7层：[11, 15, 19, 23, 27, 33, 39]
   # 索引对应：[0,  1,   2,   3,   4,   5,   6]
   out_layers: [0, 4, 8, 12, 11, 15, 19, 23]
-  alt_start: 13
-  qknorm_start: 13
-  rope_start: 13
+  alt_start: 8
+  qknorm_start: 8
+  rope_start: 8
   cat_token: True
 
 head:

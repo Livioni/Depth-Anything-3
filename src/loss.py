@@ -24,13 +24,14 @@ class MultitaskLoss(torch.nn.Module):
     - Point loss
     - Tracking loss (not cleaned yet, dirty code is at the bottom of this file)
     """
-    def __init__(self, camera=None, depth=None, point=None, ray=None, **kwargs):
+    def __init__(self, camera=None, depth=None, point=None, ray=None, seg_mask=None, **kwargs):
         super().__init__()
         # Loss configuration dictionaries for each task
         self.camera = camera
         self.depth = depth
         self.point = point
         self.ray = ray
+        self.seg_mask = seg_mask
 
     def forward(self, predictions, batch) -> torch.Tensor:
         """
@@ -60,6 +61,12 @@ class MultitaskLoss(torch.nn.Module):
             depth_loss = depth_loss * self.depth["weight"]
             total_loss = total_loss + depth_loss
             loss_dict.update(depth_loss_dict)
+            
+        if "feat" in predictions and self.seg_mask is not None:
+            seg_mask_loss_dict = embedmask_contrastive_loss(predictions, batch, **self.seg_mask)
+            seg_mask_loss = seg_mask_loss_dict["loss_seg_mask"] * self.seg_mask["weight"]
+            total_loss = total_loss + seg_mask_loss
+            loss_dict.update(seg_mask_loss_dict)
 
         if "ray" in predictions and self.ray is not None:
             ray_loss_dict = compute_ray_loss(predictions, batch, **self.ray)
@@ -71,8 +78,131 @@ class MultitaskLoss(torch.nn.Module):
 
         return loss_dict
 
+def embedmask_contrastive_loss(predictions, batch, delta_pull=0.25, 
+                               delta_push=1.0, min_mask_pixels=50, **kwargs):
+    """
+    Compute contrastive loss (pull & push) for instance segmentation from feature embeddings.
+    
+    Pull loss: encourages pixels within the same instance to have similar embeddings (cluster tightly)
+    Push loss: encourages embeddings from different instances to be far apart (inter-cluster separation)
 
+    Args:
+        predictions: Dict containing 'feat' - feature embeddings of shape (B, N, H, W, C)
+                     where B=batch, N=views, H=height, W=width, C=channels
+        batch: Dict containing:
+               - 'gt_mask': tensor of shape (B*N, H, W, num_instances) with bool masks
+                            value=1 indicates pixel belongs to that instance
+        delta_pull: margin for pull loss (pixels within instance should be closer than this)
+        delta_push: margin for push loss (instance centers should be farther than this)
+        min_mask_pixels: minimum number of valid pixels for a mask to be considered
 
+    Returns:
+        Dict containing:
+            - 'loss_pull': pull loss (intra-instance compactness)
+            - 'loss_push': push loss (inter-instance separation)
+            - 'loss_seg_mask': total contrastive loss (pull + push)
+    """
+    features = predictions['feat']  # (B, N, H, W, C)
+    gt_masks = batch['gt_mask']  # (B*N, H, W, num_instances)
+    
+    B, N, H, W, C = features.shape
+    device = features.device
+    
+    # Reshape features: (B, N, H, W, C) -> (B*N, H, W, C) -> (B*N, H*W, C)
+    features = features.reshape(B * N, H, W, C)
+    features = features.reshape(B * N, H * W, C)
+    
+    # gt_masks shape: (B*N, H, W, num_instances)
+    B, N, H_gt, W_gt, num_instances = gt_masks.shape
+    
+    # Resize gt_masks if needed
+    if H_gt != H or W_gt != W:
+        # (B*N, H_gt, W_gt, num_instances) -> (B*N, num_instances, H_gt, W_gt)
+        gt_masks = gt_masks.permute(0, 3, 1, 2)
+        # Resize to (B*N, num_instances, H, W)
+        gt_masks = F.interpolate(
+            gt_masks.float(), 
+            size=(H, W), 
+            mode='nearest'
+        ).bool()
+        # (B*N, num_instances, H, W) -> (B*N, H, W, num_instances)
+        gt_masks = gt_masks.permute(0, 2, 3, 1)
+    
+    # Reshape gt_masks: (B*N, H, W, num_instances) -> (B*N, H*W, num_instances)
+    gt_masks_flat = gt_masks.reshape(B * N, H * W, num_instances)
+    
+    total_pull_loss = 0.0
+    total_push_loss = 0.0
+    num_valid_samples = 0
+
+    # Process each sample in B*N
+    for idx in range(B * N):
+        feat = features[idx]  # (H*W, C)
+        masks = gt_masks_flat[idx]  # (H*W, num_instances)
+        
+        instance_means = []
+        pull_loss = 0.0
+        valid_instances = 0
+
+        # Pull loss: cluster pixels within each instance
+        for i in range(num_instances):
+            mask_flat = masks[:, i]  # (H*W,)
+            num_pixels = mask_flat.sum()
+            
+            if num_pixels < min_mask_pixels:
+                continue  # Skip tiny or invalid instances
+            
+            pixel_feats = feat[mask_flat.bool()]  # (num_pixels, C)
+            mean_feat = pixel_feats.mean(dim=0, keepdim=True)  # (1, C)
+            
+            # L2 distance from pixels to their instance center
+            distances = torch.norm(pixel_feats - mean_feat, p=2, dim=1)  # (num_pixels,)
+            
+            # Hinge loss: penalize distances beyond delta_pull
+            pull = F.relu(distances - delta_pull).mean()
+            pull_loss += pull
+            
+            instance_means.append(mean_feat)
+            valid_instances += 1
+        
+        if valid_instances == 0:
+            continue
+        
+        pull_loss = pull_loss / valid_instances
+        total_pull_loss += pull_loss
+
+        # Push loss: separate different instance centers
+        if len(instance_means) > 1:
+            means = torch.cat(instance_means, dim=0)  # (num_valid_instances, C)
+            
+            # Compute pairwise distances between instance centers
+            dist_mat = torch.cdist(means, means, p=2)  # (num_valid_instances, num_valid_instances)
+            
+            # Mask out diagonal (self-distances)
+            eye = torch.eye(len(means), device=device).bool()
+            
+            # Hinge loss: penalize pairs closer than delta_push
+            push_loss = F.relu(delta_push - dist_mat[~eye]).mean()
+            total_push_loss += push_loss
+        
+        num_valid_samples += 1
+
+    # Average over all valid samples
+    if num_valid_samples > 0:
+        avg_pull = total_pull_loss / num_valid_samples
+        avg_push = total_push_loss / num_valid_samples
+    else:
+        avg_pull = torch.tensor(0.0, device=device)
+        avg_push = torch.tensor(0.0, device=device)
+    
+    total_loss = avg_pull + avg_push
+
+    return {
+        'loss_pull': avg_pull,
+        'loss_push': avg_push,
+        'loss_seg_mask': total_loss
+    }
+    
 
 def compute_ray_loss(predictions, batch, weight_origins=1.0, weight_directions=1.0, **kwargs):
     """
