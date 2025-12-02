@@ -4,7 +4,7 @@
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Large-Ray"
+exp_name = "DA3-Giant"
 logging_dir = "logs"
 
 # == Logging Configuration ==
@@ -17,8 +17,8 @@ checkpointing_steps = 20000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-large.yaml"
-model_checkpoint_path = "checkpoints/da3-large/model.safetensors"
+model_config = "src/depth_anything_3/configs/da3-giant.yaml"
+model_checkpoint_path = "checkpoints/da3-giant/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
 head_freeze = False
@@ -26,7 +26,7 @@ cam_enc_freeze = False
 cam_dec_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = False
-use_gs_infer = False
+use_gs_infer = True
 
 # Additional freeze options for memory optimization
 gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
@@ -111,6 +111,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"20000 @ Scannetppv2(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 

@@ -18,6 +18,7 @@ from src.utils.geometry import depth_to_world_coords_points, closed_form_inverse
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
 from src.datasets.utils.misc import threshold_depth_map
 from src.datasets.utils.cropping import ImageList, camera_matrix_of_crop, bbox_from_intrinsics_in_out
+from visual_util import show_anns
 
 try:
     lanczos = PIL.Image.Resampling.LANCZOS
@@ -178,55 +179,6 @@ class Infinigen(BaseStereoViewDataset):
         path_dict = {i: path for i, path in enumerate(paths)}
         with open(filename, 'w') as f:
             json.dump(path_dict, f, indent=4)
-
-    def _create_instance_masks(self, seg_mask_list):
-        """
-        Convert seg_mask_list (N views, each view is (H, W) or (H, W, 1))
-        to (N, H, W, C) instance mask collection, where C is the total number
-        of unique non-zero IDs across all views (excluding background 0).
-
-        Args:
-            seg_mask_list: List of segmentation masks from N views
-
-        Returns:
-            instance_mask: (N, H, W, C) numpy array of instance masks
-        """
-        # 1. Find all unique non-zero IDs across all views
-        all_ids = set()
-        for seg_mask in seg_mask_list:
-            # Normalize shape to (H, W)
-            if seg_mask.ndim == 3 and seg_mask.shape[2] == 1:
-                seg_mask = seg_mask[..., 0]
-            unique_ids = np.unique(seg_mask)
-            all_ids.update(unique_ids.tolist())
-
-        all_ids.discard(0)  # Remove background
-        all_ids = sorted(list(all_ids))
-        id2idx = {id_: idx for idx, id_ in enumerate(all_ids)}
-        C = len(all_ids)
-
-        if C == 0:
-            # No instances found, return empty mask
-            N = len(seg_mask_list)
-            H, W = seg_mask_list[0].shape[:2]
-            return np.zeros((N, H, W, 0), dtype=np.uint8)
-
-        # 2. Build (N, H, W, C) instance mask
-        N = len(seg_mask_list)
-        H, W = seg_mask_list[0].shape[:2]
-        instance_mask = np.zeros((N, H, W, C), dtype=np.uint8)
-
-        for n, seg_mask in enumerate(seg_mask_list):
-            # Normalize shape to (H, W)
-            if seg_mask.ndim == 3 and seg_mask.shape[2] == 1:
-                seg_mask = seg_mask[..., 0]
-            for id_ in np.unique(seg_mask):
-                if id_ == 0:
-                    continue
-                idx = id2idx[id_]
-                instance_mask[n, :, :, idx] = (seg_mask == id_).astype(np.uint8)
-
-        return instance_mask
 
     def __len__(self):
         return len(self.full_idxs)

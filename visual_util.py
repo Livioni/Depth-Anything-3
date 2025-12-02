@@ -36,7 +36,7 @@ def show_anns(masks, colors, borders=True, ax=None) -> np.ndarray:
     canvas[:, :, 3] = 0  # set the alpha channel
     contour_thickness = max(1, int(min(5, 0.01 * min(H, W))))
     for mask, color in sorted_annot_and_color:
-        canvas[mask] = np.concatenate([color, [0.55]])
+        canvas[mask.astype(bool)] = np.concatenate([color, [0.55]])
         if borders:
             contours, _ = cv2.findContours(
                 np.array(mask, dtype=np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE

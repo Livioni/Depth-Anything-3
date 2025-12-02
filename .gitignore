@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 annotations/
 checkpoints/
-visualizaitions/
+visualizations/
 
 # Distribution / packaging
 workspace/

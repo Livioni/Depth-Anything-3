@@ -126,8 +126,7 @@ class DepthAnything3Net(nn.Module):
         """
         # Extract features using backbone
         if extrinsics is not None:
-            with torch.autocast(device_type=x.device.type, enabled=False):
-                cam_token = self.cam_enc(extrinsics, intrinsics, x.shape[-2:])
+            cam_token = self.cam_enc(extrinsics, intrinsics, x.shape[-2:])
         else:
             cam_token = None
 
@@ -137,9 +136,11 @@ class DepthAnything3Net(nn.Module):
         # feats = [[item for item in feat] for feat in feats]
         H, W = x.shape[-2], x.shape[-1]
 
+        # enable bf16 here to save memory
+        output = self._process_depth_head(feats, H, W)
+        
         # Process features through depth head
         with torch.autocast(device_type=x.device.type, enabled=False):
-            output = self._process_depth_head(feats, H, W)
             if use_ray_pose:
                 output = self._process_ray_pose_estimation(output, H, W)
             else:

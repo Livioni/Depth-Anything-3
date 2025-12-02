@@ -236,6 +236,7 @@ if __name__ == '__main__':
             # Merge batch dictionaries
             batch = merge_dicts(batch)
             use_ray_pose = cfg.get("use_ray_pose", False)
+            infer_gs = cfg.get("use_gs_infer", False)
             # Normalize camera extrinsics and points
             new_extrinsics, _, new_world_points, new_depths = normalize_camera_extrinsics_and_points_batch(
                 extrinsics=batch['extrinsic'],
@@ -254,16 +255,18 @@ if __name__ == '__main__':
             batch['depth'] = new_depths
                         
             # Forward pass with automatic mixed precision
-            with torch.amp.autocast('cuda', dtype=weight_dtype):
-                pose_condition_prob = cfg.get("pose_condition_prob", 0.0)
-                use_pose = torch.rand(1).item() < pose_condition_prob
-                if use_pose:
-                    predictions = model(x=batch['images'], 
-                                        extrinsics=extra_input_extrinsic_gt, 
-                                        intrinsics=batch['intrinsic'],
-                                        use_ray_pose=use_ray_pose)
-                else:
-                    predictions = model(x=batch['images'], use_ray_pose=use_ray_pose)
+            pose_condition_prob = cfg.get("pose_condition_prob", 0.0)
+            use_pose = torch.rand(1).item() < pose_condition_prob
+            if use_pose:
+                predictions = model(x=batch['images'], 
+                                    extrinsics=extra_input_extrinsic_gt, 
+                                    intrinsics=batch['intrinsic'],
+                                    infer_gs=infer_gs,
+                                    use_ray_pose=use_ray_pose)
+            else:
+                predictions = model(x=batch['images'], 
+                                    infer_gs=infer_gs,
+                                    use_ray_pose=use_ray_pose)
             
             # Compute loss (disable autocast for loss computation)
             loss_details = {}

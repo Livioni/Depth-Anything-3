@@ -4,7 +4,7 @@
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Large-Ray-Seg"
+exp_name = "DA3-Large-Seg"
 logging_dir = "logs"
 
 # == Logging Configuration ==
@@ -17,7 +17,7 @@ checkpointing_steps = 10000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-large-seg.yaml"
+model_config = "src/depth_anything_3/configs/da3-large-tri.yaml"
 model_checkpoint_path = "checkpoints/da3-large/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
@@ -26,15 +26,31 @@ cam_enc_freeze = False
 cam_dec_freeze = False
 use_gradient_checkpointing = True  # Enable gradient checkpointing to save memory
 use_ray_pose = False
+use_gs_infer = False
+
+# Additional freeze options for memory optimization
+gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
+gs_adapter_freeze = True      # Freeze GS adapter to save memory (if not using 3DGS)
+seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
+
+# ======================================================
+# LoRA Configuration (NEW)
+# ======================================================
+use_lora = False                     # Enable LoRA fine-tuning
+lora_r = 32                          # LoRA rank (higher = more parameters, typically 4-32)
+lora_alpha = 64                     # LoRA scaling factor (typically 2*lora_r)
+lora_dropout = 0.0                  # LoRA dropout rate
+lora_bias = "lora_only"             # Bias handling: "none", "all", "lora_only"
+lora_target_modules = ["qkv", "out_proj"]       # Target modules in DinoV2 attention
+lora_lr = 5e-5                      # Learning rate for LoRA parameters (typically higher than backbone)
 
 # == Training Configuration ==
-mixed_precision = "no"  # Options: "no", "fp16", "bf16"
+mixed_precision = "bf16"  # Options: "no", "fp16", "bf16"
 seed = 42
 num_train_epochs = 5
 gradient_accumulation_steps = 2
 max_grad_norm = 1.0
 drop_prob = 0.1
-check_unused_parameters = True  # Set to True to check for unused parameters during training
 pose_condition_prob = 0.2
 
 # == Dataset Configuration ==
@@ -49,6 +65,7 @@ adam_epsilon = 1e-8
 adam_weight_decay = 0.01
 
 # == Learning Rate Configuration ==
+# Note: When using LoRA, backbone LR is replaced by lora_lr
 lr = 2e-5
 lr_backbone = 1e-5
 lr_head = 2e-5
@@ -94,6 +111,8 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"40000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                + 20000 @ Infinigen(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+
 test_dataset = None  # Set to None to use same as train_dataset
 

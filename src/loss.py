@@ -174,9 +174,14 @@ def embedmask_contrastive_loss(predictions, batch, delta_pull=0.25,
         # Push loss: separate different instance centers
         if len(instance_means) > 1:
             means = torch.cat(instance_means, dim=0)  # (num_valid_instances, C)
-            
+
             # Compute pairwise distances between instance centers
-            dist_mat = torch.cdist(means, means, p=2)  # (num_valid_instances, num_valid_instances)
+            # Convert to float32 for cdist computation if using bf16 (cdist_cuda doesn't support bf16)
+            means_dtype = means.dtype
+            if means_dtype == torch.bfloat16:
+                dist_mat = torch.cdist(means.float(), means.float(), p=2).to(means_dtype)
+            else:
+                dist_mat = torch.cdist(means, means, p=2)  # (num_valid_instances, num_valid_instances)
             
             # Mask out diagonal (self-distances)
             eye = torch.eye(len(means), device=device).bool()

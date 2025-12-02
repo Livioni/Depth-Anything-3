@@ -421,16 +421,16 @@ scannetppv2_dataset = Scannetppv2(
 # New export method (migrated from api.pyTrue
 viser_mode = False
 enable_new_export = True  # Enable new export functionality from api.py
-export_formats = "gs_video"  # Options: "mini_npz", "npz", "glb", "depth_vis", "feat_vis", "gs_ply", "gs_video", "colmap"
+export_formats = "depth_vis"  # Options: "mini_npz", "npz", "glb", "depth_vis", "feat_vis", "gs_ply", "gs_video", "colmap"
                             # Combine multiple formats with '-': "glb-npz-depth_vis"
-export_dir = "outputs"
+export_dir = "visualizations"
 # ===================================
 
 batch = scannetppv2_dataset[(0,0,4)]
 images = NORMALIZE(batch['images'])          # [B, N, 3, H, W]  tensor
 
-model = create_object(load_config("src/depth_anything_3/configs/da3-giant.yaml"))
-state_dict = load_file("checkpoints/da3-giant/model.safetensors")
+model = create_object(load_config("src/depth_anything_3/configs/da3-large-tri.yaml"))
+state_dict = load_file("outputs/DA3-Large-Seg/checkpoint-1-10000/model.safetensors")
 for k in list(state_dict.keys()):
     if k.startswith('model.'):
         state_dict[k[6:]] = state_dict.pop(k)
@@ -517,12 +517,12 @@ with torch.no_grad():
     # pred_dict["world_points"] = batch['world_points']
     # pred_dict["depth"] = new_depths.squeeze()[...,None].detach().cpu().numpy()
     
-    # part_feature = torch.from_numpy(predictions_0['feat'])
-    # part_feature = F.normalize(part_feature, dim=3)
+    part_feature = torch.from_numpy(predictions_0['feat'])
+    part_feature = F.normalize(part_feature, dim=3)
 
     # # Generate PCA visualization
-    # pred_spatial_pca_masks = apply_pca_colormap(part_feature)
-    # save_pca_masks(pred_spatial_pca_masks, "visualizaitions", "colored_pca")
+    pred_spatial_pca_masks = apply_pca_colormap(part_feature)
+    save_pca_masks(pred_spatial_pca_masks, "visualizations", "colored_pca")
     
 if viser_mode:
     viser_server = viser_wrapper(
