@@ -5,12 +5,38 @@
 # LICENSE file in the root directory of this source tree.
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from dataclasses import dataclass
+from lpips import LPIPS
+from einops import rearrange
 from src.utils.pose_enc import extri_intri_to_pose_encoding
 from src.train_utils.general import check_and_fix_inf_nan
 from math import ceil, floor
+
+
+def convert_to_buffer(module: nn.Module, persistent: bool = True):
+    """
+    Convert all parameters and buffers in a module to buffers.
+    This makes them automatically follow the module when moved to different devices.
+    
+    Args:
+        module: The module to convert
+        persistent: Whether buffers should be persistent (saved in state_dict)
+    """
+    # Recurse over child modules
+    for name, child in list(module.named_children()):
+        convert_to_buffer(child, persistent)
+    
+    # Convert parameters and buffers to buffers
+    for name, parameter_or_buffer in (
+        *module.named_parameters(recurse=False),
+        *module.named_buffers(recurse=False),
+    ):
+        value = parameter_or_buffer.detach().clone()
+        delattr(module, name)
+        module.register_buffer(name, value, persistent=persistent)
 
 
 @dataclass(eq=False)
@@ -24,7 +50,7 @@ class MultitaskLoss(torch.nn.Module):
     - Point loss
     - Tracking loss (not cleaned yet, dirty code is at the bottom of this file)
     """
-    def __init__(self, camera=None, depth=None, point=None, ray=None, seg_mask=None, **kwargs):
+    def __init__(self, camera=None, depth=None, point=None, ray=None, seg_mask=None, gaussian=None, **kwargs):
         super().__init__()
         # Loss configuration dictionaries for each task
         self.camera = camera
@@ -32,8 +58,18 @@ class MultitaskLoss(torch.nn.Module):
         self.point = point
         self.ray = ray
         self.seg_mask = seg_mask
+        self.gaussian = gaussian
+        
+        # Initialize LPIPS model if gaussian loss uses LPIPS
+        self.lpips_model = None
+        if gaussian is not None and gaussian.get("use_lpips", False):
+            self.lpips_model = LPIPS(net="vgg")
+            # Set to eval mode and disable gradients
+            self.lpips_model.eval()
+            # Convert all parameters to buffers so they automatically move with the module
+            convert_to_buffer(self.lpips_model, persistent=False)
 
-    def forward(self, predictions, batch) -> torch.Tensor:
+    def forward(self, predictions, batch, step=0) -> torch.Tensor:
         """
         Compute the total multi-task loss.
         
@@ -73,6 +109,16 @@ class MultitaskLoss(torch.nn.Module):
             ray_loss = ray_loss_dict["loss_ray"] * self.ray["weight"]
             total_loss = total_loss + ray_loss
             loss_dict.update(ray_loss_dict) 
+            
+        if "gs_rendered" in predictions and self.gaussian is not None:
+            gaussian_loss_dict = compute_gaussian_loss(predictions, batch, lpips_model=self.lpips_model, **self.gaussian)
+            gaussian_loss = gaussian_loss_dict["loss_gaussian_l1"] * self.gaussian["weight"] + \
+                            gaussian_loss_dict["loss_gaussian_lpips"] * self.gaussian["lpips_weight"]
+            total_loss = total_loss + gaussian_loss
+            loss_dict.update(gaussian_loss_dict)
+            
+            #TODO
+            # gaussian_cosist = compute_consist_loss(predictions, batch, **self.gaussian)
         
         loss_dict["objective"] = total_loss
 
@@ -104,6 +150,8 @@ def embedmask_contrastive_loss(predictions, batch, delta_pull=0.25,
     """
     features = predictions['feat']  # (B, N, H, W, C)
     gt_masks = batch['gt_mask']  # (B*N, H, W, num_instances)
+    
+    features = check_and_fix_inf_nan(features, "features")
     
     B, N, H, W, C = features.shape
     device = features.device
@@ -252,6 +300,120 @@ def compute_ray_loss(predictions, batch, weight_origins=1.0, weight_directions=1
         "loss_ray_origins": loss_origins,
         "loss_ray_directions": loss_directions
     }
+
+
+def compute_gaussian_loss(predictions, batch, use_conf=False, use_mask=False,
+                            use_alpha=False, depth_dict=None, use_lpips=False, 
+                            lpips_model=None, **kwargs):
+    """
+    Compute L1 loss and optionally LPIPS loss for Gaussian splatting rendered images.
+    
+    Args:
+        predictions: Dict containing 'gaussian' with 'gs_output' that has 'alpha' and 'color'
+        batch: Dict containing ground truth 'images' and 'valid_mask'
+        use_conf: Whether to use confidence mask from depth_dict
+        use_mask: Whether to use valid_mask from batch
+        use_alpha: Whether to use alpha from gaussian output
+        depth_dict: Optional dict containing 'conf_valid_mask' for confidence-based masking
+        step: Current training step
+        use_lpips: Whether to compute LPIPS loss
+        lpips_weight: Weight for LPIPS loss
+        lpips_apply_after_step: Step after which to apply LPIPS loss
+        lpips_model: LPIPS model instance
+    
+    Returns:
+        Dict containing gaussian L1 loss and optionally LPIPS loss
+    """
+    # Extract predicted and ground truth data
+    gs_output = predictions['gs_rendered']
+    alpha = gs_output['alpha'] if isinstance(gs_output, dict) else gs_output.alpha
+    color = gs_output['color'] if isinstance(gs_output, dict) else gs_output.color
+    valid_mask = batch['valid_mask']
+
+    
+    # Get ground truth images shape (B, N, C, H, W)
+    gt_images = batch["images"]
+    B, N, C, H, W = gt_images.shape
+    
+    # Reshape color from (B*N, C, H, W) to (B, N, C, H, W)
+    color = color.reshape(B, N, C, H, W)
+    
+    # Reshape alpha from (B*N, H, W) to (B, N, H, W) if needed
+    if alpha.dim() == 3:
+        alpha = alpha.reshape(B, N, H, W)
+    
+    color = check_and_fix_inf_nan(color, "color")
+    gt_images = check_and_fix_inf_nan(gt_images, "gt_images")
+    valid_mask = check_and_fix_inf_nan(valid_mask, "valid_masks")
+    
+    # Determine which mask to use based on configuration
+    if use_mask:
+        # valid_mask should already be (B, N, H, W), ensure it's boolean
+        mask = valid_mask.bool()
+    elif use_alpha:
+        mask = alpha
+    elif use_conf and depth_dict is not None:
+        mask = depth_dict['conf_valid_mask']
+    else:
+        mask = torch.ones_like(alpha, device=alpha.device).bool()
+    
+    # Denormalize ground truth images to match predicted images
+    imagenet_mean = torch.tensor([0.485, 0.456, 0.406], device=gt_images.device).view(1, 1, 3, 1, 1)
+    imagenet_std = torch.tensor([0.229, 0.224, 0.225], device=gt_images.device).view(1, 1, 3, 1, 1)
+
+    # Denormalize gt_images: original = normalized * std + mean
+    gt_images_denorm = gt_images * imagenet_std + imagenet_mean
+
+    # Permute tensors from (B, N, C, H, W) to (B, N, H, W, C) and apply mask
+    pred_img = color.permute(0, 1, 3, 4, 2)[mask]
+    gt_img = gt_images_denorm.permute(0, 1, 3, 4, 2)[mask]
+
+    # Check if mask has any valid pixels
+    if pred_img.numel() == 0:
+        print(f"Warning: No valid pixels in mask for gaussian loss. Mask sum: {mask.sum().item()}")
+        # Return zero loss if no valid pixels
+        loss_dict = {"loss_gaussian": torch.tensor(0.0, device=color.device, requires_grad=True)}
+        if use_lpips:
+            loss_dict["loss_gaussian_lpips"] = torch.tensor(0.0, device=color.device, requires_grad=True)
+        return loss_dict
+
+    # Compute L1 loss
+    delta = pred_img - gt_img
+    l1_loss = delta.abs().mean()
+    
+    # Compute LPIPS loss if model is provided
+    if use_lpips and lpips_model is not None:
+        # LPIPS model is converted to buffer, so it automatically follows device
+        if use_mask or use_alpha or use_conf:
+            # Apply mask to images for LPIPS
+            # Expand mask to match color channels (B, N, C, H, W)
+            expanded_mask = mask.unsqueeze(2).expand(-1, -1, C, -1, -1)
+            masked_pred = color * expanded_mask
+            masked_gt = gt_images_denorm * expanded_mask
+            
+            # Reshape to (B*N, C, H, W) for LPIPS
+            lpips_loss = lpips_model.forward(
+                rearrange(masked_pred, "b v c h w -> (b v) c h w"),
+                rearrange(masked_gt, "b v c h w -> (b v) c h w"),
+                normalize=True,
+            )
+        else:
+            # No masking, use full images
+            lpips_loss = lpips_model.forward(
+                rearrange(color, "b v c h w -> (b v) c h w"),
+                rearrange(gt_images_denorm, "b v c h w -> (b v) c h w"),
+                normalize=True,
+            )
+            
+        # Handle NaN/Inf values in LPIPS loss
+        lpips_loss = torch.nan_to_num(lpips_loss.mean(), nan=0.0, posinf=0.0, neginf=0.0)
+        
+        loss_dict = {
+            "loss_gaussian_l1": l1_loss,
+            "loss_gaussian_lpips": lpips_loss,
+        }
+
+    return loss_dict
 
 
 def compute_camera_loss(
@@ -842,135 +1004,4 @@ def torch_quantile(
 
     return out
 
-
-########################################################################################
-########################################################################################
-
-# Dirty code for tracking loss:
-
-########################################################################################
-########################################################################################
-
-'''
-def _compute_losses(self, coord_preds, vis_scores, conf_scores, batch):
-    """Compute tracking losses using sequence_loss"""
-    gt_tracks = batch["tracks"]  # B, S, N, 2
-    gt_track_vis_mask = batch["track_vis_mask"]  # B, S, N
-
-    # if self.training and hasattr(self, "train_query_points"):
-    train_query_points = coord_preds[-1].shape[2]
-    gt_tracks = gt_tracks[:, :, :train_query_points]
-    gt_tracks = check_and_fix_inf_nan(gt_tracks, "gt_tracks", hard_max=None)
-
-    gt_track_vis_mask = gt_track_vis_mask[:, :, :train_query_points]
-
-    # Create validity mask that filters out tracks not visible in first frame
-    valids = torch.ones_like(gt_track_vis_mask)
-    mask = gt_track_vis_mask[:, 0, :] == True
-    valids = valids * mask.unsqueeze(1)
-
-
-
-    if not valids.any():
-        print("No valid tracks found in first frame")
-        print("seq_name: ", batch["seq_name"])
-        print("ids: ", batch["ids"])
-        print("time: ", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-
-        dummy_coord = coord_preds[0].mean() * 0          # keeps graph & grads
-        dummy_vis = vis_scores.mean() * 0
-        if conf_scores is not None:
-            dummy_conf = conf_scores.mean() * 0
-        else:
-            dummy_conf = 0
-        return dummy_coord, dummy_vis, dummy_conf                # three scalar zeros
-
-
-    # Compute tracking loss using sequence_loss
-    track_loss = sequence_loss(
-        flow_preds=coord_preds,
-        flow_gt=gt_tracks,
-        vis=gt_track_vis_mask,
-        valids=valids,
-        **self.loss_kwargs
-    )
-
-    vis_loss = F.binary_cross_entropy_with_logits(vis_scores[valids], gt_track_vis_mask[valids].float())
-
-    vis_loss = check_and_fix_inf_nan(vis_loss, "vis_loss", hard_max=None)
-
-
-    # within 3 pixels
-    if conf_scores is not None:
-        gt_conf_mask = (gt_tracks - coord_preds[-1]).norm(dim=-1) < 3
-        conf_loss = F.binary_cross_entropy_with_logits(conf_scores[valids], gt_conf_mask[valids].float())
-        conf_loss = check_and_fix_inf_nan(conf_loss, "conf_loss", hard_max=None)
-    else:
-        conf_loss = 0
-
-    return track_loss, vis_loss, conf_loss
-
-
-
-def reduce_masked_mean(x, mask, dim=None, keepdim=False):
-    for a, b in zip(x.size(), mask.size()):
-        assert a == b
-    prod = x * mask
-
-    if dim is None:
-        numer = torch.sum(prod)
-        denom = torch.sum(mask)
-    else:
-        numer = torch.sum(prod, dim=dim, keepdim=keepdim)
-        denom = torch.sum(mask, dim=dim, keepdim=keepdim)
-
-    mean = numer / denom.clamp(min=1)
-    mean = torch.where(denom > 0,
-                       mean,
-                       torch.zeros_like(mean))
-    return mean
-
-
-def sequence_loss(flow_preds, flow_gt, vis, valids, gamma=0.8, vis_aware=False, huber=False, delta=10, vis_aware_w=0.1, **kwargs):
-    """Loss function defined over sequence of flow predictions"""
-    B, S, N, D = flow_gt.shape
-    assert D == 2
-    B, S1, N = vis.shape
-    B, S2, N = valids.shape
-    assert S == S1
-    assert S == S2
-    n_predictions = len(flow_preds)
-    flow_loss = 0.0
-
-    for i in range(n_predictions):
-        i_weight = gamma ** (n_predictions - i - 1)
-        flow_pred = flow_preds[i]
-
-        i_loss = (flow_pred - flow_gt).abs()  # B, S, N, 2
-        i_loss = check_and_fix_inf_nan(i_loss, f"i_loss_iter_{i}", hard_max=None)
-
-        i_loss = torch.mean(i_loss, dim=3) # B, S, N
-
-        # Combine valids and vis for per-frame valid masking.
-        combined_mask = torch.logical_and(valids, vis)
-
-        num_valid_points = combined_mask.sum()
-
-        if vis_aware:
-            combined_mask = combined_mask.float() * (1.0 + vis_aware_w)  # Add, don't add to the mask itself.
-            flow_loss += i_weight * reduce_masked_mean(i_loss, combined_mask)
-        else:
-            if num_valid_points > 2:
-                i_loss = i_loss[combined_mask]
-                flow_loss += i_weight * i_loss.mean()
-            else:
-                i_loss = check_and_fix_inf_nan(i_loss, f"i_loss_iter_safe_check_{i}", hard_max=None)
-                flow_loss += 0 * i_loss.mean()
-
-    # Avoid division by zero if n_predictions is 0 (though it shouldn't be).
-    if n_predictions > 0:
-        flow_loss = flow_loss / n_predictions
-
-    return flow_loss
-'''
 

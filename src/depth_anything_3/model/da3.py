@@ -14,13 +14,17 @@
 
 from __future__ import annotations
 
+import os
 import torch
 import torch.nn as nn
 from addict import Dict
 from omegaconf import DictConfig, OmegaConf
+import torchvision.transforms as T
 
 from depth_anything_3.cfg import create_object
 from depth_anything_3.model.utils.transform import pose_encoding_to_extri_intri
+from depth_anything_3.model.gaussian_splat_renderer import GaussianSplatRenderer
+from depth_anything_3.specs import Gaussians
 from depth_anything_3.utils.alignment import (
     apply_metric_scaling,
     compute_alignment_mask,
@@ -31,7 +35,7 @@ from depth_anything_3.utils.alignment import (
 )
 from depth_anything_3.utils.geometry import affine_inverse, as_homogeneous, map_pdf_to_opacity
 from depth_anything_3.utils.ray_utils import get_extrinsic_from_camray
-
+from depth_anything_3.model.utils.gs_renderer import render_3dgs
 
 def _wrap_cfg(cfg_obj):
     return OmegaConf.create(cfg_obj)
@@ -103,6 +107,9 @@ class DepthAnything3Net(nn.Module):
                 seg_head if isinstance(seg_head, nn.Module) else create_object(_wrap_cfg(seg_head))
             )
 
+        # Initialize Gaussian Splat Renderer
+        self.gs_renderer = GaussianSplatRenderer()
+
     def forward(
         self,
         x: torch.Tensor,
@@ -111,6 +118,7 @@ class DepthAnything3Net(nn.Module):
         export_feat_layers: list[int] | None = [],
         infer_gs: bool = False,
         use_ray_pose: bool = False,
+        step: int = 0,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the network.
@@ -140,16 +148,16 @@ class DepthAnything3Net(nn.Module):
         output = self._process_depth_head(feats, H, W)
         
         # Process features through depth head
-        with torch.autocast(device_type=x.device.type, enabled=False):
-            if use_ray_pose:
-                output = self._process_ray_pose_estimation(output, H, W)
-            else:
-                output = self._process_camera_estimation(feats, H, W, output)
-            if infer_gs:
-                output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
-            # Process segmentation head if available
-            if self.seg_head:
-                output = self._process_segmentation_head(feats, x, H, W, output)
+        if use_ray_pose:
+            output = self._process_ray_pose_estimation(output, H, W)
+        else:
+            output = self._process_camera_estimation(feats, H, W, output)
+        if infer_gs:
+            output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
+            output = self.gs_renderer(output, x, H, W)
+        # Process segmentation head if available
+        if self.seg_head:
+            output = self._process_segmentation_head(feats, x, H, W, output)
 
         # Extract auxiliary features if requested
         output.aux = self._extract_auxiliary_features(aux_feats, export_feat_layers, H, W)

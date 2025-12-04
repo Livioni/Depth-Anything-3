@@ -22,6 +22,7 @@ from visual_util import (
     get_world_points_from_depth,
 )
 
+from src.depth_anything_3.utils.geometry import normalize_extrinsics
 NORMALIZE = T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
 from src.datasets.scannetppv2 import Scannetppv2 # noqa
@@ -421,7 +422,7 @@ scannetppv2_dataset = Scannetppv2(
 # New export method (migrated from api.pyTrue
 viser_mode = False
 enable_new_export = True  # Enable new export functionality from api.py
-export_formats = "depth_vis"  # Options: "mini_npz", "npz", "glb", "depth_vis", "feat_vis", "gs_ply", "gs_video", "colmap"
+export_formats = "gs_video-glb-feat_vis-depth_vis"  # Options: "mini_npz", "npz", "glb", "depth_vis", "feat_vis", "gs_ply", "gs_video", "colmap"
                             # Combine multiple formats with '-': "glb-npz-depth_vis"
 export_dir = "visualizations"
 # ===================================
@@ -429,8 +430,8 @@ export_dir = "visualizations"
 batch = scannetppv2_dataset[(0,0,4)]
 images = NORMALIZE(batch['images'])          # [B, N, 3, H, W]  tensor
 
-model = create_object(load_config("src/depth_anything_3/configs/da3-large-tri.yaml"))
-state_dict = load_file("outputs/DA3-Large-Seg/checkpoint-1-10000/model.safetensors")
+model = create_object(load_config("src/depth_anything_3/configs/da3-giant.yaml"))
+state_dict = load_file("checkpoints/da3-giant/model.safetensors")
 for k in list(state_dict.keys()):
     if k.startswith('model.'):
         state_dict[k[6:]] = state_dict.pop(k)
@@ -454,15 +455,7 @@ new_extrinsics, _, new_world_points, new_depths = normalize_camera_extrinsics_an
                                                 point_masks = batch['valid_mask'])
 
 
-input_extrinsics = new_extrinsics.clone()
-input_extrinsics = torch.cat(
-    [
-        input_extrinsics,
-        torch.zeros((1, new_extrinsics.shape[1], 1, 4), device=torch.device("cpu")),
-    ],
-    dim=-2,
-)
-input_extrinsics[:, :, -1, -1] = 1.0
+input_extrinsics = normalize_extrinsics(batch['extrinsic'])
 input_intrinsics = batch['intrinsic'].clone()
 
 
@@ -478,18 +471,18 @@ with torch.no_grad():
         infer_gs = True,
     )
     
-    outputs['images'] = batch['images'].numpy()   # add back original images
+    # outputs['images'] = batch['images'].numpy()   # add back original images
     
-    pred_dict = {
-        "images": batch['images'].numpy(),   # (S, 3, H, W)
-        "depth": outputs.depth.squeeze()[...,None].detach().cpu().numpy(),  # (S, H, W, 1)
-        "depth_conf": outputs.depth_conf.squeeze().detach().cpu().numpy(),  # (S, H, W)
-        "extrinsic": outputs.extrinsics.squeeze().detach().cpu().numpy(),   # (S, 3, 4)
-        "intrinsic": outputs.intrinsics.squeeze().detach().cpu().numpy(),   # (S, 3, 3)
-    }
+    # pred_dict = {
+    #     "images": batch['images'].numpy(),   # (S, 3, H, W)
+    #     "depth": outputs.depth.squeeze()[...,None].detach().cpu().numpy(),  # (S, H, W, 1)
+    #     "depth_conf": outputs.depth_conf.squeeze().detach().cpu().numpy(),  # (S, H, W)
+    #     "extrinsic": outputs.extrinsics.squeeze().detach().cpu().numpy(),   # (S, 3, 4)
+    #     "intrinsic": outputs.intrinsics.squeeze().detach().cpu().numpy(),   # (S, 3, 3)
+    # }
     
-    predictions_0 = select_first_batch(outputs)
-    get_world_points_from_depth(predictions_0)
+    # predictions_0 = select_first_batch(outputs)
+    # get_world_points_from_depth(predictions_0)
     
     # ========== New Export Method (from api.py) ==========
     if enable_new_export:
@@ -506,7 +499,7 @@ with torch.no_grad():
             prediction=prediction,
             export_format=export_formats,  # e.g., "glb", "npz", "glb-npz", "depth_vis"
             export_dir=export_dir,
-            conf_thresh_percentile=40.0,  # For GLB: filter bottom 40% confidence points
+            conf_thresh_percentile=5.0,  # For GLB: filter bottom 40% confidence points
             num_max_points=1_000_000,      # For GLB: max points in point cloud
             show_cameras=True,             # For GLB: show camera frustums
         )
@@ -517,21 +510,22 @@ with torch.no_grad():
     # pred_dict["world_points"] = batch['world_points']
     # pred_dict["depth"] = new_depths.squeeze()[...,None].detach().cpu().numpy()
     
-    part_feature = torch.from_numpy(predictions_0['feat'])
-    part_feature = F.normalize(part_feature, dim=3)
+#     if "feat" in predictions_0:
+#         part_feature = torch.from_numpy(predictions_0['feat'])
+#         part_feature = F.normalize(part_feature, dim=3)
 
-    # # Generate PCA visualization
-    pred_spatial_pca_masks = apply_pca_colormap(part_feature)
-    save_pca_masks(pred_spatial_pca_masks, "visualizations", "colored_pca")
+#         # # Generate PCA visualization
+#         pred_spatial_pca_masks = apply_pca_colormap(part_feature)
+#         save_pca_masks(pred_spatial_pca_masks, "visualizations", "colored_pca")
     
-if viser_mode:
-    viser_server = viser_wrapper(
-        pred_dict=pred_dict,
-        port=8079,
-        init_conf_threshold=10,
-        use_point_map=False,
-        background_mode=False,
-        mask_sky=False,
-        image_folder=None,
-    )
-    print("Visualization complete")
+# if viser_mode:
+#     viser_server = viser_wrapper(
+#         pred_dict=pred_dict,
+#         port=8079,
+#         init_conf_threshold=10,
+#         use_point_map=False,
+#         background_mode=False,
+#         mask_sky=False,
+#         image_folder=None,
+#     )
+#     print("Visualization complete")

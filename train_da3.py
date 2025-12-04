@@ -111,11 +111,12 @@ if __name__ == '__main__':
     logger.info("Made all model parameters and buffers contiguous for DDP compatibility")
     
     # Prepare model, optimizer, and dataloader FIRST (WITHOUT scheduler)
-    # This is important: we need to know the actual sharded dataloader length
-    # before we can calculate the correct total_training_steps for the scheduler
     model, optimizer, train_dataloader = \
         accelerator.prepare(model, optimizer, train_dataloader)
-    
+
+    # Move loss criterion to the same device as the model
+    train_criterion = train_criterion.to(accelerator.device)
+
     # NOW calculate training steps based on ACTUAL sharded dataloader
     # After prepare(), len(train_dataloader) returns the LOCAL length for this process
     world_size = accelerator.num_processes
@@ -131,15 +132,13 @@ if __name__ == '__main__':
     logger.info(f"  Steps per epoch (per process): {local_steps_per_epoch}")
     logger.info(f"  Total training steps: {total_training_steps}")
     
-    # Build learning rate scheduler with CORRECT total_training_steps
-    # Note: Each process runs the same number of steps independently in DDP
-    # So we use the per-process total_training_steps, not multiplied by world_size
     lr_scheduler = build_cosine_warmup_scheduler(
         optimizer=optimizer,
         warmup_steps=cfg.get("warmup_steps", 5000),
         total_steps=total_training_steps,
         eta_min_factor=cfg.get("eta_min_factor", 0.1)
     )
+    accelerator.register_for_checkpointing(lr_scheduler)
     
     
     # ======================================================
@@ -270,15 +269,14 @@ if __name__ == '__main__':
             
             # Compute loss (disable autocast for loss computation)
             loss_details = {}
-            with torch.amp.autocast('cuda', enabled=False):
-                loss_dict = train_criterion(predictions, batch)
-                
-                # Extract scalar values for logging
-                for key, value in loss_dict.items():
-                    if isinstance(value, torch.Tensor):
-                        loss_details[key] = value.detach().item()
-                    else:
-                        loss_details[key] = value
+            loss_dict = train_criterion(predictions, batch)
+            
+            # Extract scalar values for logging
+            for key, value in loss_dict.items():
+                if isinstance(value, torch.Tensor):
+                    loss_details[key] = value.detach().item()
+                else:
+                    loss_details[key] = value
             
             # Backward pass
             accelerator.backward(loss_dict['objective'])
@@ -366,7 +364,9 @@ if __name__ == '__main__':
                 
                 # Save checkpoint (main process only)
                 if accelerator.is_main_process and global_step % cfg.get("checkpointing_steps", 10000) == 0:
-                    save_path = os.path.join(save_dir, f"checkpoint-{epoch}-{global_step}")
+                    # Calculate completed epochs based on global_step
+                    completed_epochs = global_step // local_steps_per_epoch
+                    save_path = os.path.join(save_dir, f"checkpoint-{completed_epochs}-{global_step}")
                     logger.info(f"Saving checkpoint to {save_path}...")
                     accelerator.save_state(save_path)
                     logger.info(f"Checkpoint saved successfully")

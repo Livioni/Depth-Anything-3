@@ -467,13 +467,6 @@ def load_model(cfg: Any, device: torch.device):
                 gs_head_trainable = sum(p.numel() for p in model.gs_head.parameters() if p.requires_grad)
                 logger.info(f"  GS Head: {gs_head_trainable:,} / {gs_head_params:,} trainable")
         
-        # GS adapter parameters
-        if hasattr(model, 'gs_adapter'):
-            if model.gs_adapter:
-                gs_adapter_params = sum(p.numel() for p in model.gs_adapter.parameters())
-                gs_adapter_trainable = sum(p.numel() for p in model.gs_adapter.parameters() if p.requires_grad)
-                logger.info(f"  GS Adapter: {gs_adapter_trainable:,} / {gs_adapter_params:,} trainable")
-        
         # Seg head parameters
         if hasattr(model, 'seg_head'):
             if model.seg_head:
@@ -618,8 +611,20 @@ def build_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                 "lr": cfg.get("lr_cam_dec"),
                 "name": "cam_dec"
             })
-        
-        exclude_keys = ["backbone", "head", "cam_enc", "cam_dec"]
+            
+        if model.gs_head:
+            if cfg.get("gs_head_freeze", False):
+                for param in model.gs_head.parameters():
+                    param.requires_grad = False
+                logger.info("GS head parameters are frozen.")
+            else:
+                param_groups.append({
+                    "params": model.gs_head.parameters(),
+                    "lr": cfg.get("lr_gs_head"),
+                    "name": "gs_head"
+                })
+                
+        exclude_keys = ["backbone", "head", "cam_enc", "cam_dec", "gs_head"]
         
         param_groups.append({
             "params": [
@@ -659,32 +664,66 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
     Returns:
         MultitaskLoss instance
     """
-    criterion = MultitaskLoss(
+    if not cfg.get("cam_dec_freeze", True):
         camera={
             "weight": cfg.get("camera_loss_weight", 5.0),
             "loss_type": cfg.get("camera_loss_type", "l1")
         },
+    else:
+        camera=None
+        
+    if not cfg.get("head_freeze", True):
         depth={
             "weight": cfg.get("depth_loss_weight", 1.0),
             "gradient_loss_fn": cfg.get("depth_gradient_loss_fn", "grad"),
             "valid_range": cfg.get("depth_valid_range", 0.98)
         },
+    else:
+        depth=None
+        
+    if cfg.get("use_ray_pose", True):
         ray={
             "weight": cfg.get("ray_loss_weight", 1.0),
             "loss_type": cfg.get("ray_loss_type", "l1")
         },
+    else:
+        ray=None
+        
+    if not cfg.get("seg_head_freeze", True):
         seg_mask={
             "weight": cfg.get("seg_mask_loss_weight", 1.0),
             "delta_pull": cfg.get("seg_mask_delta_pull", 0.25),
             "delta_push": cfg.get("seg_mask_delta_push", 1.0),
             "min_mask_pixels": cfg.get("seg_mask_min_mask_pixels", 50)
+        },
+    else:
+        seg_mask=None
+        
+    if not cfg.get("gs_head_freeze", True):
+        gaussian={
+            "weight": cfg.get("gaussian_loss_weight", 1.0),
+            "use_conf": cfg.get("gaussian_use_conf", False),
+            "use_mask": cfg.get("gaussian_use_mask", True),
+            "use_alpha": cfg.get("gaussian_use_alpha", False),
+            "use_lpips": cfg.get("gaussian_use_lpips", False),
+            "lpips_weight": cfg.get("gaussian_lpips_weight", 1.0),
         }
+    else:
+        gaussian=None
+        
+    criterion = MultitaskLoss(
+        camera=camera,
+        depth=depth,
+        ray=ray,
+        seg_mask=seg_mask,
+        gaussian=gaussian
     )
     
     logger.info("Loss criterion initialized:")
     logger.info(f"  Camera loss weight: {cfg.get('camera_loss_weight', 5.0)}")
     logger.info(f"  Depth loss weight: {cfg.get('depth_loss_weight', 1.0)}")
     logger.info(f"  Ray loss weight: {cfg.get('ray_loss_weight', 1.0)}")
+    logger.info(f"  Gaussian loss weight: {cfg.get('gaussian_loss_weight', 1.0)}")
     
     return criterion
 

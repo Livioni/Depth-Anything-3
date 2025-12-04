@@ -13,8 +13,10 @@
 # limitations under the License.
 
 from depth_anything_3.model.da3 import DepthAnything3Net, NestedDepthAnything3Net
+from depth_anything_3.model.gaussian_splat_renderer import GaussianSplatRenderer
 
 __export__ = [
     NestedDepthAnything3Net,
     DepthAnything3Net,
+    GaussianSplatRenderer,
 ]

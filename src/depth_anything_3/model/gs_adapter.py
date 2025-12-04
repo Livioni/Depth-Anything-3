@@ -74,9 +74,9 @@ class GaussianAdapter(nn.Module):
 
         # get cam2worlds and intr_normed to adapt to 3DGS codebase
         cam2worlds = affine_inverse(extrinsics)
-        intr_normed = intrinsics.clone().detach()
-        intr_normed[..., 0, :] /= W
-        intr_normed[..., 1, :] /= H
+        # Normalize intrinsics while maintaining gradient flow
+        intr_normed = intrinsics / torch.tensor([[[W, W, W], [H, H, H], [1, 1, 1]]], 
+                                                 device=intrinsics.device, dtype=intrinsics.dtype)
 
         # 1. compute 3DGS means
         # 1.1) offset the predicted depth if needed

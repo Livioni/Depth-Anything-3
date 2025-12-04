@@ -56,7 +56,7 @@ def export_to_glb(
     conf_thresh: float = 1.05,
     filter_black_bg: bool = False,
     filter_white_bg: bool = False,
-    conf_thresh_percentile: float = 40.0,
+    conf_thresh_percentile: float = 5.0,
     ensure_thresh_percentile: float = 90.0,
     sky_depth_def: float = 98.0,
     show_cameras: bool = True,

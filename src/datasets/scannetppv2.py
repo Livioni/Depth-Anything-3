@@ -161,13 +161,13 @@ class Scannetppv2(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/scannetppv2_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/scannetppv2_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/scannetppv2_annotations/{dset}/depth_paths.json')
-            self._save_paths_to_json(self.all_seg_mask_paths, f'annotations/scannetppv2_annotations/{dset}/seg_mask_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/scannetppv2_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/scannetppv2_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/scannetppv2_annotations/{dset}/rankings.joblib')
+            # os.makedirs(f'annotations/scannetppv2_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/scannetppv2_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'annotations/scannetppv2_annotations/{dset}/depth_paths.json')
+            # self._save_paths_to_json(self.all_seg_mask_paths, f'annotations/scannetppv2_annotations/{dset}/seg_mask_paths.json')
+            # joblib.dump(self.all_extrinsic, f'annotations/scannetppv2_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'annotations/scannetppv2_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'annotations/scannetppv2_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
