@@ -30,7 +30,6 @@ use_gs_infer = True
 
 # Additional freeze options for memory optimization
 gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
-gs_adapter_freeze = True      # Freeze GS adapter to save memory (if not using 3DGS)
 seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
 
 # ======================================================
@@ -71,6 +70,7 @@ lr_backbone = 1e-5
 lr_head = 2e-5
 lr_cam_enc = 2e-5
 lr_cam_dec = 2e-5
+lr_gs_head = 2e-6
 
 # == Learning Rate Scheduler Configuration ==
 lr_scheduler_type = "cosine_with_warmup"
@@ -90,6 +90,14 @@ ray_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
 depth_valid_range = 0.98
+
+# Gaussian loss (only active when gs_head_freeze = False)
+gaussian_loss_weight = 1.0
+gaussian_use_conf = False      # Use confidence mask from depth
+gaussian_use_mask = True       # Use valid mask from batch
+gaussian_use_alpha = False     # Use alpha from gaussian output
+gaussian_use_lpips = True     # Use LPIPS perceptual loss
+gaussian_lpips_weight = 0.1    # Weight for LPIPS loss
 
 # == Visualization Configuration ==
 vis_conf_threshold = 0.2
@@ -111,6 +119,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Scannetppv2(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"20000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 

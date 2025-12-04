@@ -28,11 +28,6 @@ use_gradient_checkpointing = True   # Enable gradient checkpointing to save memo
 use_ray_pose = False
 use_gs_infer = False
 
-# Additional freeze options for memory optimization
-gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
-gs_adapter_freeze = True      # Freeze GS adapter to save memory (if not using 3DGS)
-seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
-
 # ======================================================
 # LoRA Configuration (NEW)
 # ======================================================

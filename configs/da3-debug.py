@@ -17,27 +17,26 @@ checkpointing_steps = 10000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-large.yaml"
-model_checkpoint_path = "checkpoints/da3-large/model.safetensors"
+model_config = "src/depth_anything_3/configs/da3-giant.yaml"
+model_checkpoint_path = "checkpoints/da3-giant/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
-head_freeze = False
-cam_enc_freeze = False
-cam_dec_freeze = False
-use_gradient_checkpointing = False  # Enable gradient checkpointing to save memory
+head_freeze = True
+cam_enc_freeze = True
+cam_dec_freeze = True
+use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = False
-use_gs_infer = False
+use_gs_infer = True
 
 # Additional freeze options for memory optimization
-gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
-gs_adapter_freeze = True      # Freeze GS adapter to save memory (if not using 3DGS)
+gs_head_freeze = False        # Freeze GS head to save memory (if not using 3DGS)
 seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
 
 # ======================================================
 # LoRA Configuration (NEW)
 # ======================================================
 use_lora = False                     # Enable LoRA fine-tuning
-lora_r = 32                          # LoRA rank (higher = more parameters, typically 4-32)
+lora_r = 32                         # LoRA rank (higher = more parameters, typically 4-32)
 lora_alpha = 64                     # LoRA scaling factor (typically 2*lora_r)
 lora_dropout = 0.0                  # LoRA dropout rate
 lora_bias = "lora_only"             # Bias handling: "none", "all", "lora_only"
@@ -48,8 +47,8 @@ lora_lr = 5e-5                      # Learning rate for LoRA parameters (typical
 mixed_precision = "bf16"  # Options: "no", "fp16", "bf16"
 seed = 42
 num_train_epochs = 5
-gradient_accumulation_steps = 2
-max_grad_norm = 1.0
+gradient_accumulation_steps = 1
+max_grad_norm = 1
 drop_prob = 0.1
 pose_condition_prob = 0.2
 
@@ -71,6 +70,7 @@ lr_backbone = 1e-5
 lr_head = 2e-5
 lr_cam_enc = 2e-5
 lr_cam_dec = 2e-5
+lr_gs_head = 2e-5
 
 # == Learning Rate Scheduler Configuration ==
 lr_scheduler_type = "cosine_with_warmup"
@@ -90,6 +90,14 @@ ray_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
 depth_valid_range = 0.98
+
+# Gaussian loss (only active when gs_head_freeze = False)
+gaussian_loss_weight = 1.0
+gaussian_use_conf = False      # Use confidence mask from depth
+gaussian_use_mask = True       # Use valid mask from batch
+gaussian_use_alpha = False     # Use alpha from gaussian output
+gaussian_use_lpips = True     # Use LPIPS perceptual loss
+gaussian_lpips_weight = 0.1    # Weight for LPIPS loss
 
 # == Visualization Configuration ==
 vis_conf_threshold = 0.2

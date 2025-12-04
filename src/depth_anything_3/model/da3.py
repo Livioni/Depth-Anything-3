@@ -161,8 +161,36 @@ class DepthAnything3Net(nn.Module):
 
         # Extract auxiliary features if requested
         output.aux = self._extract_auxiliary_features(aux_feats, export_feat_layers, H, W)
+
         # add image for visualization
         output["images"] = x
+        
+        return output
+
+    def _process_mono_sky_estimation(
+        self, output: Dict[str, torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        """Process mono sky estimation."""
+        if "sky" not in output:
+            return output
+        non_sky_mask = compute_sky_mask(output.sky, threshold=0.3)
+        if non_sky_mask.sum() <= 10:
+            return output
+        if (~non_sky_mask).sum() <= 10:
+            return output
+        
+        non_sky_depth = output.depth[non_sky_mask]
+        if non_sky_depth.numel() > 100000:
+            idx = torch.randint(0, non_sky_depth.numel(), (100000,), device=non_sky_depth.device)
+            sampled_depth = non_sky_depth[idx]
+        else:
+            sampled_depth = non_sky_depth
+        non_sky_max = torch.quantile(sampled_depth, 0.99)
+
+        # Set sky regions to maximum depth and high confidence
+        output.depth, _ = set_sky_regions_to_max_depth(
+            output.depth, None, non_sky_mask, max_depth=non_sky_max
+        )
         return output
 
     def _process_ray_pose_estimation(
