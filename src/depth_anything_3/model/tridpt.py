@@ -150,36 +150,26 @@ class TriDPT(DualDPT):
               feat_cf: [B, S, 1,       H/down_ratio, W/down_ratio]
         """
         B, S, N, C = feats[0][0].shape
-        # 先保留原始 [B, S, N, C]
-        raw_feats = [feat[0] for feat in feats]
-
+        feats = [feat[0].reshape(B * S, N, C) for feat in feats]
         if chunk_size is None or chunk_size >= S:
-            feats_flat = [f.reshape(B * S, N, C) for f in raw_feats]
-            out_dict = self._forward_impl(feats_flat, H, W, patch_start_idx)
+            out_dict = self._forward_impl(feats, H, W, patch_start_idx)
             out_dict = {k: v.reshape(B, S, *v.shape[1:]) for k, v in out_dict.items()}
             return Dict(out_dict)
-
-        # 否则：沿 S 维分块
-        out_chunks = []
-        s_ranges = []
-        for s0 in range(0, S, chunk_size):
-            s1 = min(s0 + chunk_size, S)
-            s_ranges.append((s0, s1))
-            feats_chunk = [
-                f[:, s0:s1].reshape(B * (s1 - s0), N, C)  # 正确：先按 S 切，再展平
-                for f in raw_feats
-            ]
-            out_chunks.append(self._forward_impl(feats_chunk, H, W, patch_start_idx))
-
-        # 把每个 chunk 的输出还原回 [B, chunk_S, ...]，再沿 S 拼起来
-        out_dict = {}
-        for k in out_chunks[0].keys():
-            v_chunks = []
-            for (s0, s1), out_c in zip(s_ranges, out_chunks):
-                v_c = out_c[k].reshape(B, (s1 - s0), *out_c[k].shape[1:])
-                v_chunks.append(v_c)
-            out_dict[k] = torch.cat(v_chunks, dim=1)  # 在 S 维拼接，得到 [B, S, ...]
-
+        out_dicts = []
+        for s0 in range(0, B * S, chunk_size):
+            s1 = min(s0 + chunk_size, B * S)
+            out_dict = self._forward_impl(
+                [feat[s0:s1] for feat in feats],
+                H,
+                W,
+                patch_start_idx,
+            )
+            out_dicts.append(out_dict)
+        out_dict = {
+            k: torch.cat([out_dict[k] for out_dict in out_dicts], dim=0)
+            for k in out_dicts[0].keys()
+        }
+        out_dict = {k: v.view(B, S, *v.shape[1:]) for k, v in out_dict.items()}
         return Dict(out_dict)
 
     # -------------------------------------------------------------------------

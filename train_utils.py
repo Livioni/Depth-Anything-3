@@ -668,7 +668,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         camera={
             "weight": cfg.get("camera_loss_weight", 5.0),
             "loss_type": cfg.get("camera_loss_type", "l1")
-        },
+        }
     else:
         camera=None
         
@@ -677,7 +677,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
             "weight": cfg.get("depth_loss_weight", 1.0),
             "gradient_loss_fn": cfg.get("depth_gradient_loss_fn", "grad"),
             "valid_range": cfg.get("depth_valid_range", 0.98)
-        },
+        }
     else:
         depth=None
         
@@ -685,7 +685,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         ray={
             "weight": cfg.get("ray_loss_weight", 1.0),
             "loss_type": cfg.get("ray_loss_type", "l1")
-        },
+        }
     else:
         ray=None
         
@@ -695,7 +695,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
             "delta_pull": cfg.get("seg_mask_delta_pull", 0.25),
             "delta_push": cfg.get("seg_mask_delta_push", 1.0),
             "min_mask_pixels": cfg.get("seg_mask_min_mask_pixels", 50)
-        },
+        }
     else:
         seg_mask=None
         
