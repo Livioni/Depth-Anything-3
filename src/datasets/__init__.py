@@ -1,6 +1,7 @@
 
 from .scannetppv2 import Scannetppv2 # noqa
 from .infinigen import Infinigen # noqa
+from .droid import Droid # noqa
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
 
