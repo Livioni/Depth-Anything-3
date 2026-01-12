@@ -4,7 +4,7 @@ __pycache__/
 annotations/
 checkpoints/
 visualizations/
-datasets/robotwin
+/datasets
 
 # Distribution / packaging
 workspace/

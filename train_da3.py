@@ -6,6 +6,7 @@ import torch
 import wandb
 import accelerate
 
+import itertools
 from tqdm import tqdm
 
 from accelerate.logging import get_logger
@@ -230,8 +231,13 @@ if __name__ == '__main__':
             disable=not accelerator.is_local_main_process,
         )
         
+        # Build iterator so we can skip already completed batches when resuming
+        if step_in_epoch > 0:
+            logger.info(f"Skipping {step_in_epoch} batches to resume within epoch {epoch + 1}")
+        train_iter = itertools.islice(train_dataloader, step_in_epoch, None)
+        
         # Training loop for this epoch
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in enumerate(train_iter, start=step_in_epoch):
             # Merge batch dictionaries
             batch = merge_dicts(batch)
             use_ray_pose = cfg.get("use_ray_pose", False)
