@@ -281,6 +281,34 @@ class RLBench(BaseStereoViewDataset):
         with open(filename, 'w') as f:
             json.dump(path_dict, f, indent=4)
 
+    def _pyrep_to_opencv_intrinsics(self, rgb_image: Image.Image, depthmap: np.ndarray, intrinsics: np.ndarray):
+        """
+        Convert PyRep intrinsics (fx/fy negative, origin top-left) to OpenCV convention.
+        If fx or fy is negative, flip the corresponding axis on both rgb and depth and
+        shift the principal point accordingly while taking |f|.
+        """
+        K = intrinsics.copy()
+        fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+        W, H = rgb_image.size  # PIL gives (width, height)
+
+        # Horizontal flip if fx is negative
+        if fx < 0:
+            rgb_image = rgb_image.transpose(Image.FLIP_LEFT_RIGHT)
+            depthmap = np.flip(depthmap, axis=1)
+            cx = (W - 1) - cx
+            fx = abs(fx)
+
+        # Vertical flip if fy is negative
+        if fy < 0:
+            rgb_image = rgb_image.transpose(Image.FLIP_TOP_BOTTOM)
+            depthmap = np.flip(depthmap, axis=0)
+            cy = (H - 1) - cy
+            fy = abs(fy)
+
+        K[0, 0], K[1, 1] = fx, fy
+        K[0, 2], K[1, 2] = cx, cy
+        return rgb_image, depthmap, K.astype(np.float32)
+
     def __len__(self):
         return len(self.full_idxs)  
 
@@ -315,6 +343,7 @@ class RLBench(BaseStereoViewDataset):
             # Load and preprocess images
             rgb_image = Image.open(impath).convert("RGB")
             depthmap = np.load(depthpath).astype(np.float32)
+            rgb_image, depthmap, intrinsics = self._pyrep_to_opencv_intrinsics(rgb_image, depthmap, intrinsics)
             
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)  
@@ -457,7 +486,7 @@ if __name__ == "__main__":
                         cam_size=cam_size)
         # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('rlbench-0-reverse.glb')
+        viz.save_glb('rlbench-0.glb')
         return 
 
     dataset = RLBench(
