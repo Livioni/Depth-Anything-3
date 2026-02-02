@@ -238,7 +238,7 @@ class RLBench(BaseStereoViewDataset):
                     self.full_idxs.extend(new_sequence)
                     
                     all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')))
-                    all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.npy')))
+                    all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')))
                     all_extrinsic_paths = sorted(glob.glob(os.path.join(extrinsic_path, '*.npy')))
                     all_intrinsic_paths = sorted(glob.glob(os.path.join(intrinsic_path, '*.npy')))
                     self.all_rgb_paths.extend(all_rgb_paths)
@@ -342,7 +342,9 @@ class RLBench(BaseStereoViewDataset):
         for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
             # Load and preprocess images
             rgb_image = Image.open(impath).convert("RGB")
-            depthmap = np.load(depthpath).astype(np.float32)
+            # Load depth map as uint16 to preserve full precision
+            depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32)
+            depthmap = depthmap / 1000.0  # Convert from mm to meters
             rgb_image, depthmap, intrinsics = self._pyrep_to_opencv_intrinsics(rgb_image, depthmap, intrinsics)
             
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
@@ -460,7 +462,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/colosseum_wrist_data'  # Change this to the correct path
+    dataset_location = 'datasets'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4

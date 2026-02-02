@@ -5,6 +5,7 @@ from .droid import Droid # noqa
 from .rlbench import RLBench # noqa
 from .robotwin import RoboTwin # noqa
 from .adt import ADT # noqa
+from .hoi4d import HOI4D # noqa
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
 
