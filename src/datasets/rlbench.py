@@ -462,7 +462,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets'  # Change this to the correct path
+    dataset_location = 'datasets/colosseum_wrist_data'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4

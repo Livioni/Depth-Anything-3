@@ -381,4 +381,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((10,0,num_views))
+    visualize_scene((100,0,num_views))

@@ -11,6 +11,7 @@ from PIL import Image
 import PIL
 import json
 import joblib
+import matplotlib.pyplot as plt
 
 from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
@@ -31,43 +32,112 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 ToTensor = tvf.ToTensor()
 
+import numpy as np
+
+def ray_depth_to_z_depth(ray_depth_map, intrinsics):
+    """
+    将ray depth转换为z-depth
+
+    Args:
+        ray_depth_map: 深度图，形状为(H, W)，值是ray depth
+        intrinsics: 相机内参矩阵，形状为(3, 3)
+
+    Returns:
+        z_depth_map: 转换后的z-depth图，形状为(H, W)
+    """
+    H, W = ray_depth_map.shape
+    fu, fv = intrinsics[0, 0], intrinsics[1, 1]  # focal lengths
+    cu, cv = intrinsics[0, 2], intrinsics[1, 2]  # principal point
+
+    # 生成像素坐标网格
+    u, v = np.meshgrid(np.arange(W), np.arange(H))
+
+    # 计算从像素坐标到相机坐标系的归一化方向向量
+    x_norm = (u - cu) / fu
+    y_norm = (v - cv) / fv
+
+    # ray depth到z-depth的转换公式
+    # z_depth = ray_depth / sqrt(1 + x_norm^2 + y_norm^2)
+    norm_factor = np.sqrt(1 + x_norm**2 + y_norm**2)
+    z_depth_map = ray_depth_map / norm_factor
+
+    return z_depth_map.astype(np.float32)
+
+
+def z_depth_to_ray_depth(z_depth_map, intrinsics):
+    """
+    将z-depth转换为ray depth（用于验证）
+
+    Args:
+        z_depth_map: 深度图，形状为(H, W)，值是z-depth
+        intrinsics: 相机内参矩阵，形状为(3, 3)
+
+    Returns:
+        ray_depth_map: 转换后的ray-depth图，形状为(H, W)
+    """
+    H, W = z_depth_map.shape
+    fu, fv = intrinsics[0, 0], intrinsics[1, 1]  # focal lengths
+    cu, cv = intrinsics[0, 2], intrinsics[1, 2]  # principal point
+
+    # 生成像素坐标网格
+    u, v = np.meshgrid(np.arange(W), np.arange(H))
+
+    # 计算从像素坐标到相机坐标系的归一化方向向量
+    x_norm = (u - cu) / fu
+    y_norm = (v - cv) / fv
+
+    # z-depth到ray depth的转换公式
+    # ray_depth = z_depth * sqrt(1 + x_norm^2 + y_norm^2)
+    norm_factor = np.sqrt(1 + x_norm**2 + y_norm**2)
+    ray_depth_map = z_depth_map * norm_factor
+
+    return ray_depth_map.astype(np.float32)
 
 def load_camera_info_from_json(json_path):
     """
-    从HOI4D数据集的info.json文件中读取相机信息
+    从REALM数据集的camera_params.json文件中读取相机信息
 
     Args:
-        json_path (str): info.json文件的路径
+        json_path (str): camera_params.json文件的路径
 
     Returns:
-        tuple: (intrinsic, extrinsics)
-            - intrinsic: np.ndarray, 相机内参矩阵 [3, 3]
+        tuple: (intrinsics, extrinsics)
+            - intrinsics: np.ndarray, 相机内参矩阵数组 [n, 3, 3]
             - extrinsics: np.ndarray, 外参矩阵数组 [n, 4, 4]
     """
     with open(json_path, 'r') as f:
         data = json.load(f)
 
-    # 读取crop_intrinsic并转换为3x3内参矩阵
-    crop_intrinsic = data['crop_intrinsic']
-    fx, fy = crop_intrinsic['fx'], crop_intrinsic['fy']
-    cx, cy = crop_intrinsic['cx'], crop_intrinsic['cy']
+    # 获取帧数
+    num_frames = data['num_frames']
+    camera_params_per_frame = data['camera_params_per_frame']
 
-    # 构建内参矩阵
-    intrinsic = np.array([
-        [fx, 0, cx],
-        [0, fy, cy],
-        [0, 0, 1]
-    ], dtype=np.float32)
+    # 初始化内参和外参数组
+    intrinsics = []
+    extrinsics = []
 
-    # 读取extrinsics数组
-    extrinsics = np.array(data['extrinsics'], dtype=np.float32)
-    extrinsics[:, :3, 3] = extrinsics[:, :3, 3] / 1000.0
+    # 遍历每一帧
+    for frame_idx in range(num_frames):
+        frame_data = camera_params_per_frame[frame_idx]
+        wrist_camera = frame_data['wrist_camera']
 
-    return intrinsic, extrinsics
+        # 读取内参矩阵 [3, 3]
+        intrinsic_matrix = np.array(wrist_camera['intrinsic_matrix'], dtype=np.float32)
+        intrinsics.append(intrinsic_matrix)
 
-class HOI4D(BaseStereoViewDataset):
+        # 读取外参矩阵 [4, 4]
+        extrinsic_matrix = np.array(wrist_camera['extrinsic_matrix'], dtype=np.float32)
+        extrinsics.append(extrinsic_matrix)
+
+    # 转换为numpy数组
+    intrinsics = np.array(intrinsics, dtype=np.float32)
+    extrinsics = np.array(extrinsics, dtype=np.float32)
+
+    return intrinsics, extrinsics
+
+class Realm(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='datasets/HOI4D',
+                 dataset_location='datasets/realm',
                  dset='',
                  use_cache=True,
                  use_augs=False,
@@ -81,11 +151,11 @@ class HOI4D(BaseStereoViewDataset):
                  **kwargs
                  ):
 
-        print('loading HOI4D dataset...')
+        print('loading REALM dataset...')
         super().__init__(*args, **kwargs)
 
         # Initialize instance attributes
-        self.dataset_label = 'HOI4D'
+        self.dataset_label = 'Realm'
         self.dset = dset
         self.top_k = top_k
         self.specify = specify
@@ -114,7 +184,7 @@ class HOI4D(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/hoi4d_annotations'
+            dataset_location = 'annotations/realm_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -137,8 +207,8 @@ class HOI4D(BaseStereoViewDataset):
                     print('seq', seq)
 
                 rgb_path = os.path.join(seq, 'images' )
-                depth_path = os.path.join(seq, 'lbdepth')
-                annotaions_file_path = os.path.join(seq, 'camera', 'recon/split_0/info.json')
+                depth_path = os.path.join(seq, 'depth_wrist_camera')
+                annotaions_file_path = os.path.join(seq, 'camera_params.json')
                 num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
                 if num_frames < 24:
@@ -155,7 +225,7 @@ class HOI4D(BaseStereoViewDataset):
                 
                 
                 intrinsic, extrinsics = load_camera_info_from_json(annotaions_file_path)
-                self.all_intrinsic.extend([intrinsic]*num_frames)
+                self.all_intrinsic.extend(intrinsic)
                 self.all_extrinsic.extend(extrinsics)
                 all_extrinsic_numpy = np.array(extrinsics)
                 
@@ -168,12 +238,12 @@ class HOI4D(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind] 
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/hoi4d_annotations/{self.dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/hoi4d_annotations/{self.dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/hoi4d_annotations/{self.dset}/depth_paths.json')
-            joblib.dump(self.rank, f'annotations/hoi4d_annotations/{self.dset}/rankings.joblib')
-            joblib.dump(self.all_extrinsic, f'annotations/hoi4d_annotations/{self.dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/hoi4d_annotations/{self.dset}/intrinsics.joblib')
+            os.makedirs(f'annotations/realm_annotations/{self.dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/realm_annotations/{self.dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/realm_annotations/{self.dset}/depth_paths.json')
+            joblib.dump(self.rank, f'annotations/realm_annotations/{self.dset}/rankings.joblib')
+            joblib.dump(self.all_extrinsic, f'annotations/realm_annotations/{self.dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/realm_annotations/{self.dset}/intrinsics.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
     
@@ -224,8 +294,19 @@ class HOI4D(BaseStereoViewDataset):
             rgb_image = Image.open(impath)
             rgb_image = rgb_image.convert("RGB")
             depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0
-            depthmap[~np.isfinite(depthmap)] = 0  # invalid
-            depthmap = threshold_depth_map(depthmap, max_percentile=98, min_percentile=2)
+
+            # 调试：检查深度图的统计信息
+            print(f"原始深度图统计: min={depthmap.min():.3f}, max={depthmap.max():.3f}, mean={depthmap.mean():.3f}")
+            print(f"图像中心深度: {depthmap[depthmap.shape[0]//2, depthmap.shape[1]//2]:.3f}")
+            print(f"图像边缘深度: {depthmap[0, 0]:.3f}, {depthmap[0, -1]:.3f}, {depthmap[-1, 0]:.3f}, {depthmap[-1, -1]:.3f}")
+
+            # 如果确认是ray depth，转换为z-depth
+            depthmap = ray_depth_to_z_depth(depthmap, intrinsics)
+
+            # 调试：检查转换后的深度图
+            print(f"转换后深度图统计: min={depthmap.min():.3f}, max={depthmap.max():.3f}, mean={depthmap.mean():.3f}")
+            print(f"转换后图像中心深度: {depthmap[depthmap.shape[0]//2, depthmap.shape[1]//2]:.3f}")
+            print(f"转换后图像边缘深度: {depthmap[0, 0]:.3f}, {depthmap[0, -1]:.3f}, {depthmap[-1, 0]:.3f}, {depthmap[-1, -1]:.3f}")
                         
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)        
@@ -364,27 +445,27 @@ if __name__ == "__main__":
                         image=colors,
                         cam_size=cam_size)
         # return viz.show()
-        viz.save_glb(f'hoi4d_views_{num_views}_ld.glb')
+        viz.save_glb(f'realm_views_{num_views}_m.glb')
         return
 
-    dataset = HOI4D(
-        dataset_location="datasets/HOI4D",
+    dataset = Realm(
+        dataset_location="datasets/realm",
         dset = '',
         use_cache = False,
         use_augs=use_augs, 
         top_k= 50,
         quick=False,
         verbose=True,
-        resolution=(512,224), 
+        resolution=(512,292), 
         seed = 777,
         load_mask=False,
         aug_crop=16,
-        z_far = 20)
+        z_far = 20000)
 
-    dataset[(101,0,16)]
+    dataset[(101,0,4)]
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
-    visualize_scene((400,0,num_views))
+    visualize_scene((50,0,num_views))
     # print(len(dataset))
 
 

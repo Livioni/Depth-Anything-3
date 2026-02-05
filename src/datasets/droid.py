@@ -82,7 +82,6 @@ class Droid(BaseStereoViewDataset):
         self.full_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
-        self.all_seg_mask = []
         self.all_normal_paths = []
         self.all_extrinsic = []
         self.all_intrinsic = []
@@ -110,12 +109,10 @@ class Droid(BaseStereoViewDataset):
                 self.all_depth_paths = json.load(file)       
             self.all_rgb_paths = [self.all_rgb_paths[str(i)] for i in range(len(self.all_rgb_paths))]
             self.all_depth_paths = [self.all_depth_paths[str(i)] for i in range(len(self.all_depth_paths))]
-            self.all_seg_mask_paths = [self.all_seg_mask_paths[str(i)] for i in range(len(self.all_seg_mask_paths))]
             self.full_idxs = list(range(len(self.all_rgb_paths)))
             self.rank = joblib.load(os.path.join(dataset_location, dset, 'rankings.joblib'))
             self.all_extrinsic = joblib.load(os.path.join(dataset_location, dset, 'extrinsics.joblib'))
             self.all_intrinsic = joblib.load(os.path.join(dataset_location, dset, 'intrinsics.joblib'))
-            self.all_seg_mask = joblib.load(os.path.join(dataset_location, dset, 'seg_mask.joblib'))
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
             
         else:
@@ -123,53 +120,48 @@ class Droid(BaseStereoViewDataset):
             for seq in self.sequences:
                 if self.verbose: 
                     print('seq', seq)
-
-                # sub_scenes = sub_scenes[:100] #数据太多了，每个物体只要50个
-                rgb_path = os.path.join(seq, 'images')
-                depth_path = os.path.join(seq,  'depth_npy')
-                # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
-                extrinsic_path = os.path.join(seq, 'extrinsics_refined')
-                intrinsic_path = glob.glob(os.path.join(seq, "intrinsics", '*.npy'))[0]
-                mask_file_path = os.path.join(seq, "masks", "tracked_masks_coco.json")
-                num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
-                
-                if num_frames < 24:
-                    print(f"Skipping sequence {seq} with only {num_frames} frames.")
-                    continue
-                
-                new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
-                old_sequence_length = len(self.full_idxs)
-                self.full_idxs.extend(new_sequence)
-                all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')),key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-                all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.npz')),key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-                all_extrinsic_paths = sorted(glob.glob(os.path.join(extrinsic_path, '*.npy')),key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
-                self.all_rgb_paths.extend(all_rgb_paths)
-                self.all_depth_paths.extend(all_depth_paths)
-                masks = load_subject_masks(Path(mask_file_path), 0)
-                masks = np.array(masks,dtype=np.bool_)
-                self.all_seg_mask.extend(masks)   
-                
-                N = len(self.full_idxs)
-
-                all_extrinsic_numpy = []
-                for extrinsic_path in all_extrinsic_paths:
-                    all_extrinsic_numpy.append(np.load(extrinsic_path).astype(np.float32))
-                    self.all_extrinsic.extend([np.load(extrinsic_path).astype(np.float32)])
-                intrinsic_seq = np.load(intrinsic_path).astype(np.float32)
-                self.all_intrinsic.extend([intrinsic_seq]*num_frames)
                     
-                assert len(self.all_rgb_paths) == N and \
-                    len(self.all_depth_paths) == N and \
-                    len(self.all_seg_mask) == N and \
-                    len(self.all_extrinsic) == N and \
-                    len(self.all_intrinsic) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
+                for sub_seq in os.listdir(seq):
+                    
+                    # sub_scenes = sub_scenes[:100] #数据太多了，每个物体只要50个
+                    rgb_path = os.path.join(seq, sub_seq, 'images','left')
+                    depth_path = os.path.join(seq, sub_seq, 'lbdepth')
+                    # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
+                    extrinsic_path = glob.glob(os.path.join(seq, sub_seq, 'extrinsics','*left.npy'))[0]
+                    intrinsic_path = glob.glob(os.path.join(seq, sub_seq, "intrinsics", '*left.npy'))[0]
+                    num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
+                    
+                    if num_frames < 24:
+                        print(f"Skipping sequence {seq} with only {num_frames} frames.")
+                        continue
+                    
+                    new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
+                    old_sequence_length = len(self.full_idxs)
+                    self.full_idxs.extend(new_sequence)
+                    all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')),key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                    # all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')),key=lambda x: int(os.path.splitext(os.path.basename(x))[0]))
+                    all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')))
+                    self.all_rgb_paths.extend(all_rgb_paths)
+                    self.all_depth_paths.extend(all_depth_paths)
+                    
+                    N = len(self.full_idxs)
 
-                assert len(all_extrinsic_numpy) != 0
-                ranking, dists = compute_ranking(all_extrinsic_numpy, lambda_t=1.0, normalize=True, batched=True)
-                ranking = np.array(ranking, dtype=np.int32)
-                ranking += old_sequence_length
-                for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
-                    self.rank[i] = ranking[ind]
+                    extrinsic_seq = np.load(extrinsic_path).astype(np.float32)[:-1]
+                    intrinsic_seq = np.load(intrinsic_path).astype(np.float32)
+                    self.all_extrinsic.extend(extrinsic_seq)
+                    self.all_intrinsic.extend([intrinsic_seq]*num_frames)
+                        
+                    assert len(self.all_rgb_paths) == N and \
+                        len(self.all_depth_paths) == N and \
+                        len(self.all_extrinsic) == N and \
+                        len(self.all_intrinsic) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
+
+                    assert len(extrinsic_seq) != 0
+                    ranking, dists = compute_ranking( extrinsic_seq, lambda_t=1.0, normalize=True, batched=True)
+                    ranking = np.array(ranking, dtype=np.int32)
+                    ranking += old_sequence_length
+                    for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
+                        self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
             os.makedirs(f'annotations/droid_annotations/{dset}', exist_ok=True)
@@ -178,7 +170,6 @@ class Droid(BaseStereoViewDataset):
             joblib.dump(self.all_extrinsic, f'annotations/droid_annotations/{dset}/extrinsics.joblib')
             joblib.dump(self.all_intrinsic, f'annotations/droid_annotations/{dset}/intrinsics.joblib')
             joblib.dump(self.rank, f'annotations/droid_annotations/{dset}/rankings.joblib')
-            joblib.dump(self.all_seg_mask, f'annotations/droid_annotations/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -214,13 +205,12 @@ class Droid(BaseStereoViewDataset):
         depth_paths = [self.all_depth_paths[i] for i in full_idx]
         camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
         intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
-        seg_mask_list = [self.all_seg_mask[i] for i in full_idx]
 
         views = []
-        for impath, depthpath, camera_pose, intrinsics, seg_mask in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list, seg_mask_list):
+        for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
             # Load and preprocess images
             rgb_image = Image.open(impath).convert("RGB")
-            depthmap = np.load(depthpath)["depth"].astype(np.float32)
+            depthmap = imread_cv2(depthpath, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000
             # depthmap[seg_mask] = 0
             # depthmap = imread_cv2(depthpath, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000
             # depthmap = np.load(depthpath).astype(np.float32)
@@ -339,7 +329,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/droid/samples'  # Change this to the correct path
+    dataset_location = 'datasets/droid_wrist'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 5
@@ -365,7 +355,7 @@ if __name__ == "__main__":
                         cam_size=cam_size)
         # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('droid-100-s2m2-refine.glb')
+        viz.save_glb('droid-200-lbdepth.glb')
         return 
 
     dataset = Droid(
@@ -374,7 +364,7 @@ if __name__ == "__main__":
         use_cache = False,
         use_augs=use_augs,
         top_k = 64,
-        quick=truncate,
+        quick=False,
         verbose=True,
         resolution=[(518,280)], 
         aug_crop=16,
@@ -388,4 +378,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((100,0,num_views))
+    visualize_scene((200,0,num_views))

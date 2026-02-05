@@ -6,6 +6,7 @@ from .rlbench import RLBench # noqa
 from .robotwin import RoboTwin # noqa
 from .adt import ADT # noqa
 from .hoi4d import HOI4D # noqa
+from .realm import Realm # noqa
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
 
