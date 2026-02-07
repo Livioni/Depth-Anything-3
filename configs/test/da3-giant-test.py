@@ -4,11 +4,11 @@
 
 # == Common ==
 output_dir = "outputs"
-exp_name = "DA3-Giant-test"
+exp_name = "DA3-Giant-ori-raydepth-pose-test"
 
 # == Model (required by train_utils.load_model) ==
 model_config = "src/depth_anything_3/configs/da3-giant.yaml"
-model_checkpoint_path = "outputs/DA3-Giant-test/checkpoint-0-5000/model.safetensors"
+model_checkpoint_path = "checkpoints/da3-giant-1.1/model.safetensors"
 
 # Evaluation only: no gradients needed
 model_requires_grad = False
@@ -23,6 +23,7 @@ use_gs_infer = False
 
 # == Runtime ==
 num_workers = 8
+vis_prediction_mode = "Ray+Depth"
 
 # == Dataset ==
 resolution = [(504, 280)]

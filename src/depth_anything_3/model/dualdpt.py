@@ -250,6 +250,10 @@ class DualDPT(nn.Module):
 
         # Auxiliary head (multi-level inside) -> only last level returned (after activation)
         last_aux = fused_aux_pyr[-1]
+        # livion add 
+        last_aux = custom_interpolate(
+            last_aux, (h_out, w_out), mode="bilinear", align_corners=True
+        )
         if self.pos_embed:
             last_aux = self._add_pos_embed(last_aux, W, H)
         # neck (per-level pre-conv) then final projection (only for last level)

@@ -715,36 +715,13 @@ def compute_point_loss(predictions, batch, **kwargs):
     pred_depth = check_and_fix_inf_nan(pred_depth, "pred_depth", hard_max=None)
 
     # Target dims
-    _, _, H_gt, W_gt, _ = gt_points.shape
     _, _, H_depth, W_depth, _ = pred_depth.shape
-
-    def _resize_bshwc(x, size_hw, mode="bilinear", align_corners=False):
-        """
-        Resize a (B, S, H, W, C) tensor to given (H, W).
-        """
-        if x.shape[-3:-1] == tuple(size_hw):
-            return x
-        B_, S_, H_, W_, C_ = x.shape
-        x_ = x.permute(0, 1, 4, 2, 3).reshape(B_ * S_, C_, H_, W_)
-        x_ = F.interpolate(x_, size=size_hw, mode=mode, align_corners=align_corners)
-        x_ = x_.reshape(B_, S_, C_, size_hw[0], size_hw[1]).permute(0, 1, 3, 4, 2)
-        return x_
-
     # Resize ray map to match depth map size (user intention)
-    if (H_ray, W_ray) != (H_depth, W_depth):
-        pred_directions = _resize_bshwc(pred_directions, (H_depth, W_depth), mode="bilinear", align_corners=False)
-        pred_origins = _resize_bshwc(pred_origins, (H_depth, W_depth), mode="bilinear", align_corners=False)
-
-    # Directions should be unit-length (bilinear interpolation breaks normalization)
-    pred_directions = F.normalize(pred_directions, dim=-1, eps=1e-6)
+    assert (H_ray, W_ray) == (H_depth, W_depth)
 
     # Project predicted rays with depth to get point cloud (at depth resolution)
     pred_points = pred_origins + pred_directions * pred_depth  # (B, S, H_depth, W_depth, 3)
     pred_points = check_and_fix_inf_nan(pred_points, "pred_points", hard_max=None)
-
-    # Align prediction point cloud to GT resolution if needed
-    if (H_depth, W_depth) != (H_gt, W_gt):
-        pred_points = _resize_bshwc(pred_points, (H_gt, W_gt), mode="bilinear", align_corners=False)
 
     # Compute masked L1 loss between predicted and ground truth points
     mask = gt_points_mask.to(dtype=torch.bool)

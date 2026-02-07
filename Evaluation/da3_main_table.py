@@ -27,6 +27,7 @@ from src.utils.misc import select_first_batch  # noqa: E402
 from src.train_utils.normalization import (  # noqa: E402
     normalize_camera_extrinsics_and_points_batch,
 )
+from train_utils import compute_gt_ray_map
 from src.utils.image import denormalize_image
 from depth_anything_3.cfg import create_object, load_config
 from safetensors.torch import load_file
@@ -164,6 +165,11 @@ def main(args: argparse.Namespace) -> None:
         # 与训练一致：给“条件相机 token”的 GT 外参做 normalize_extrinsics()
         extra_input_extrinsic_gt, _ = normalize_extrinsics(batch["extrinsic"])
 
+        ray_map = compute_gt_ray_map(new_extrinsics, batch['intrinsic'], 
+                            batch['images'].shape[-2], batch['images'].shape[-1], 
+                            batch['images'].shape[-2], batch['images'].shape[-1])
+        batch['ray_map'] = ray_map
+                    
         # 更新 batch 为归一化后的 GT（用于评测对齐）
         batch["extrinsic"] = new_extrinsics
         batch["world_points"] = new_world_points
@@ -200,6 +206,7 @@ def main(args: argparse.Namespace) -> None:
 
         # ===== Save Visualizations =====
         if args.save_visual_every > 0 and (index % args.save_visual_every == 0):
+            prediction_mode = cfg.get("vis_prediction_mode", "Predicted Depth")
             predictions_0 = select_first_batch(predictions)
             # 适配 visual_util 的可视化接口（同时支持 extrinsics/extrinsic 两种 key）
             vis_pred: dict[str, Any] = dict(predictions_0)
@@ -209,6 +216,10 @@ def main(args: argparse.Namespace) -> None:
                 vis_pred["depth"] = vis_pred["depth"].detach().cpu().numpy()[..., None]  # (S,H,W,1)
             if isinstance(vis_pred.get("depth_conf"), torch.Tensor):
                 vis_pred["depth_conf"] = vis_pred["depth_conf"].detach().cpu().numpy()
+
+            if cfg.get("use_gt", False):
+                vis_pred["ray"] = batch["ray_map"]
+                vis_pred["depth"] = batch["depth"].detach().cpu().numpy()[..., None]
 
             if "extrinsics" in vis_pred and isinstance(vis_pred["extrinsics"], torch.Tensor):
                 ex = vis_pred["extrinsics"].detach().cpu()
@@ -223,7 +234,7 @@ def main(args: argparse.Namespace) -> None:
 
             out_ply = os.path.join(
                 visualization_dir,
-                f"scene_{index}_S{seq_len}_{'condPose' if args.use_pose_condition else 'noPose'}.ply",
+                f"scene_{index}_{prediction_mode}_{'condPose' if args.use_pose_condition else 'noPose'}.ply",
             )
             try:
                 predictions_to_ply(
@@ -232,7 +243,7 @@ def main(args: argparse.Namespace) -> None:
                     filter_by_frames="all",
                     mask_black_bg=False,
                     mask_white_bg=False,
-                    prediction_mode="Depth",
+                    prediction_mode=prediction_mode,
                     output_filename=out_ply,
                 )
             except Exception as e:

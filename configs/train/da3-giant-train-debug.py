@@ -78,7 +78,7 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 
 # == Loss Configuration ==
 # Camera loss
-camera_loss_weight = 5.0
+camera_loss_weight = 0.5 # mainly use ray loss
 camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
 # Ray Loss

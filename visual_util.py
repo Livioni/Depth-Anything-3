@@ -15,6 +15,7 @@ import cv2
 import os
 import requests
 import torch
+import torch.nn.functional as F
 from PIL import Image
 from src.utils.geometry import unproject_depth_map_to_point_map, closed_form_inverse_se3
 from src.utils.rotation import mat_to_quat
@@ -194,6 +195,14 @@ def predictions_to_ply(
         else:
             pred_world_points = predictions["world_points_from_depth"]
             pred_world_points_conf = predictions.get("depth_conf", np.ones_like(pred_world_points[..., 0]))
+    elif "Ray+Depth" in prediction_mode:
+        pred_ray = predictions['ray']  # (B, S, H_ray, W_ray, 6) - [directions, origins]
+        pred_depth = predictions['depth']  # (B, S, H_depth, W_depth, 1)
+        pred_directions = pred_ray[..., :3]  # (B, S, H_ray, W_ray, 3) - directions first
+        pred_origins = pred_ray[..., 3:]  # (B, S, H_ray, W_ray, 3) - origins second
+        # Project predicted rays with depth to get point cloud (at depth resolution)
+        pred_world_points = pred_origins.detach().cpu().numpy() + pred_directions.detach().cpu().numpy() * pred_depth  # (B, S, H_depth, W_depth, 3)
+        pred_world_points_conf = predictions.get("depth_conf", np.ones_like(pred_world_points[..., 0]))
     else:
         if isinstance(predictions["depth"], np.ndarray):
             predictions["depth"] = torch.from_numpy(predictions["depth"])
