@@ -98,6 +98,13 @@ class MultitaskLoss(torch.nn.Module):
             total_loss = total_loss + depth_loss
             loss_dict.update(depth_loss_dict)
             
+        if "depth" in predictions and "ray" in predictions and self.point is not None:
+            point_loss_dict = compute_point_loss(predictions, batch, **self.point)
+            point_loss = point_loss_dict["loss_reg_point"]
+            point_loss = point_loss * self.point["weight"]
+            total_loss = total_loss + point_loss
+            loss_dict.update(point_loss_dict)
+            
         if "feat" in predictions and self.seg_mask is not None:
             seg_mask_loss_dict = embedmask_contrastive_loss(predictions, batch, **self.seg_mask)
             seg_mask_loss = seg_mask_loss_dict["loss_seg_mask"] * self.seg_mask["weight"]
@@ -106,7 +113,8 @@ class MultitaskLoss(torch.nn.Module):
 
         if "ray" in predictions and self.ray is not None:
             ray_loss_dict = compute_ray_loss(predictions, batch, **self.ray)
-            ray_loss = ray_loss_dict["loss_ray"] * self.ray["weight"]
+            ray_loss = ray_loss_dict["loss_conf_ray"] + ray_loss_dict["loss_reg_ray"]
+            ray_loss = ray_loss * self.ray["weight"]
             total_loss = total_loss + ray_loss
             loss_dict.update(ray_loss_dict) 
             
@@ -257,49 +265,197 @@ def embedmask_contrastive_loss(predictions, batch, delta_pull=0.25,
     }
     
 
-def compute_ray_loss(predictions, batch, weight_origins=1.0, weight_directions=1.0, **kwargs):
+def regression_loss_l1(pred, gt, mask, conf=None, gamma=1.0, alpha=0.2, valid_range=-1):
     """
-    Compute L1 loss for ray origins and directions.
-    
+    L1 version of regression loss function with confidence weighting, no gradient loss.
+
+    Computes:
+    1. gamma * |pred - gt| * conf - alpha * log(conf)
+
     Args:
-        predictions: Dict containing 'ray' predictions
-        batch: Dict containing ground truth 'ray_origins' and 'ray_directions'
-        weight_origins: Weight for ray origins loss
-        weight_directions: Weight for ray directions loss
-    
+        pred: (B, S, H, W, C) predicted values
+        gt: (B, S, H, W, C) ground truth values
+        mask: (B, S, H, W) valid pixel mask
+        conf: (B, S, H, W) confidence weights (optional)
+        gamma: Weight for confidence loss
+        alpha: Weight for confidence regularization
+        valid_range: Quantile range for outlier filtering
+
     Returns:
-        Dict containing individual ray losses and total ray loss
+        loss_conf: Confidence-weighted loss
+        loss_reg: Regular L1 loss
+    """
+    bb, ss, hh, ww, nc = pred.shape
+
+    # Compute L1 distance between predicted and ground truth
+    loss_reg = torch.abs(gt[mask] - pred[mask]).mean(dim=-1)
+    loss_reg = check_and_fix_inf_nan(loss_reg, "loss_reg_l1")
+
+    # Confidence-weighted loss: gamma * loss * conf - alpha * log(conf)
+    if conf is not None:
+        loss_conf = gamma * loss_reg * conf[mask] - alpha * torch.log(conf[mask])
+    else:
+        loss_conf = gamma * loss_reg
+    loss_conf = check_and_fix_inf_nan(loss_conf, "loss_conf_l1")
+
+    # Process confidence-weighted loss
+    if loss_conf.numel() > 0:
+        # Filter out outliers using quantile-based thresholding
+        if valid_range > 0:
+            loss_conf = filter_by_quantile(loss_conf, valid_range)
+
+        loss_conf = check_and_fix_inf_nan(loss_conf, "loss_conf_l1")
+        loss_conf = loss_conf.mean()
+    else:
+        loss_conf = (0.0 * pred).mean()
+
+    # Process regular regression loss
+    if loss_reg.numel() > 0:
+        # Filter out outliers using quantile-based thresholding
+        if valid_range > 0:
+            loss_reg = filter_by_quantile(loss_reg, valid_range)
+
+        loss_reg = check_and_fix_inf_nan(loss_reg, "loss_reg_l1")
+        loss_reg = loss_reg.mean()
+    else:
+        loss_reg = (0.0 * pred).mean()
+
+    return loss_conf, loss_reg
+
+
+def regression_loss_l1_with_gradient(pred, gt, mask, conf=None, gradient_loss_fn=None, gamma=1.0, alpha=0.2, valid_range=-1):
+    """
+    L1 version of regression loss function with confidence weighting and optional gradient loss.
+
+    Computes:
+    1. gamma * |pred - gt| * conf - alpha * log(conf)
+    2. Optional gradient loss
+
+    Args:
+        pred: (B, S, H, W, C) predicted values
+        gt: (B, S, H, W, C) ground truth values
+        mask: (B, S, H, W) valid pixel mask
+        conf: (B, S, H, W) confidence weights (optional)
+        gradient_loss_fn: Type of gradient loss ("normal", "grad", etc.)
+        gamma: Weight for confidence loss
+        alpha: Weight for confidence regularization
+        valid_range: Quantile range for outlier filtering
+
+    Returns:
+        loss_conf: Confidence-weighted loss
+        loss_grad: Gradient loss (0 if not specified)
+        loss_reg: Regular L1 loss
+    """
+    bb, ss, hh, ww, nc = pred.shape
+
+    # Compute L1 distance between predicted and ground truth points
+    loss_reg = torch.abs(gt[mask] - pred[mask]).mean(dim=-1)
+    loss_reg = check_and_fix_inf_nan(loss_reg, "loss_reg_l1")
+
+    # Confidence-weighted loss: gamma * loss * conf - alpha * log(conf)
+    if conf is not None:
+        loss_conf = gamma * loss_reg * conf[mask] - alpha * torch.log(conf[mask])
+    else:
+        loss_conf = gamma * loss_reg
+    loss_conf = check_and_fix_inf_nan(loss_conf, "loss_conf_l1")
+
+    # Initialize gradient loss
+    loss_grad = 0
+
+    # Prepare confidence for gradient loss if needed
+    if gradient_loss_fn and "conf" in gradient_loss_fn:
+        to_feed_conf = conf.reshape(bb*ss, hh, ww)
+    else:
+        to_feed_conf = None
+
+    # Compute gradient loss if specified for spatial smoothness
+    if gradient_loss_fn and "normal" in gradient_loss_fn:
+        # Surface normal-based gradient loss
+        loss_grad = gradient_loss_multi_scale_wrapper(
+            pred.reshape(bb*ss, hh, ww, nc),
+            gt.reshape(bb*ss, hh, ww, nc),
+            mask.reshape(bb*ss, hh, ww),
+            gradient_loss_fn=normal_loss,
+            scales=3,
+            conf=to_feed_conf,
+        )
+    elif gradient_loss_fn and "grad" in gradient_loss_fn:
+        # Standard gradient-based loss
+        loss_grad = gradient_loss_multi_scale_wrapper(
+            pred.reshape(bb*ss, hh, ww, nc),
+            gt.reshape(bb*ss, hh, ww, nc),
+            mask.reshape(bb*ss, hh, ww),
+            gradient_loss_fn=gradient_loss,
+            conf=to_feed_conf,
+        )
+
+    # Process confidence-weighted loss
+    if loss_conf.numel() > 0:
+        # Filter out outliers using quantile-based thresholding
+        if valid_range > 0:
+            loss_conf = filter_by_quantile(loss_conf, valid_range)
+
+        loss_conf = check_and_fix_inf_nan(loss_conf, f"loss_conf_depth")
+        loss_conf = loss_conf.mean()
+    else:
+        loss_conf = (0.0 * pred).mean()
+
+    # Process regular regression loss
+    if loss_reg.numel() > 0:
+        # Filter out outliers using quantile-based thresholding
+        if valid_range > 0:
+            loss_reg = filter_by_quantile(loss_reg, valid_range)
+
+        loss_reg = check_and_fix_inf_nan(loss_reg, f"loss_reg_depth")
+        loss_reg = loss_reg.mean()
+    else:
+        loss_reg = (0.0 * pred).mean()
+
+    return loss_conf, loss_grad, loss_reg
+
+
+def compute_ray_loss(predictions, batch, gamma=1.0, alpha=0.2, **kwargs):
+    """
+    Compute L1 loss for ray predictions using depth regression loss structure.
+
+    Args:
+        predictions: Dict containing 'ray' and 'ray_conf' predictions
+        batch: Dict containing ground truth 'ray_map'
+        gamma: Weight for confidence loss
+        alpha: Weight for confidence regularization
+
+    Returns:
+        Dict containing ray losses
     """
     pred_ray = predictions['ray']
-    
-    # Assuming pred_ray contains both origins and directions
-    # pred_ray shape: (B, ..., 6) where first 3 dims are origins, last 3 are directions
-    pred_origins = pred_ray[..., :3]
-    pred_directions = pred_ray[..., 3:]
+    pred_ray_conf = predictions['ray_conf']
 
-    gt_origins = batch['ray_origins']
-    gt_directions = batch['ray_directions']
-    
-    # Check for invalid values
-    gt_origins = check_and_fix_inf_nan(gt_origins, "gt_ray_origins", hard_max=None)
-    gt_directions = check_and_fix_inf_nan(gt_directions, "gt_ray_directions", hard_max=None)
-    
-    # Compute L1 loss for origins
-    loss_origins = (pred_origins - gt_origins).abs().mean()
-    loss_origins = check_and_fix_inf_nan(loss_origins, "loss_ray_origins")
-    
-    # Compute L1 loss for directions
-    loss_directions = (pred_directions - gt_directions).abs().mean()
-    loss_directions = check_and_fix_inf_nan(loss_directions, "loss_ray_directions")
-    
-    # Compute weighted total loss
-    total_ray_loss = loss_origins * weight_origins + loss_directions * weight_directions
-    
-    return {
-        "loss_ray": total_ray_loss,
-        "loss_ray_origins": loss_origins,
-        "loss_ray_directions": loss_directions
+    gt_ray_map = batch['ray_map']
+    gt_ray_map = check_and_fix_inf_nan(gt_ray_map, "gt_ray_map")
+
+    # Get valid mask - assume all rays are valid if not provided
+    gt_ray_mask = batch.get('ray_valid_mask',
+                           torch.ones_like(gt_ray_map[..., 0], dtype=torch.bool))
+
+    if gt_ray_mask.sum() < 100:
+        # If there are less than 100 valid points, skip this batch
+        dummy_loss = (0.0 * pred_ray).mean()
+        loss_dict = {
+            "loss_conf_ray": dummy_loss,
+            "loss_reg_ray": dummy_loss,
+        }
+        return loss_dict
+
+    # Use L1 regression loss (no gradient loss)
+    loss_conf, loss_reg = regression_loss_l1(pred_ray, gt_ray_map, gt_ray_mask,
+                                            conf=pred_ray_conf, gamma=gamma, alpha=alpha)
+
+    loss_dict = {
+        "loss_conf_ray": loss_conf,
+        "loss_reg_ray": loss_reg,
     }
+
+    return loss_dict
 
 
 def compute_gaussian_loss(predictions, batch, use_conf=False, use_mask=False,
@@ -525,43 +681,83 @@ def camera_loss_single(pred_pose_enc, gt_pose_enc, loss_type="l1"):
     return loss_T, loss_R, loss_FL
 
 
-def compute_point_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_fn = None, valid_range=-1, **kwargs):
+def compute_point_loss(predictions, batch, **kwargs):
     """
-    Compute point loss.
-    
+    Compute L1 point loss by projecting rays with depth to get point cloud.
+
     Args:
-        predictions: Dict containing 'world_points' and 'world_points_conf'
-        batch: Dict containing ground truth 'world_points' and 'point_masks'
-        gamma: Weight for confidence loss
-        alpha: Weight for confidence regularization
-        gradient_loss_fn: Type of gradient loss to apply
-        valid_range: Quantile range for outlier filtering
+        predictions: Dict containing 'ray' and 'depth' predictions
+        batch: Dict containing ground truth 'world_points', 'ray_map', and 'valid_mask'
     """
-    pred_points = predictions['world_points']
-    pred_points_conf = predictions['world_points_conf']
-    gt_points = batch['world_points']
-    gt_points_mask = batch['valid_mask']
-    
+    # Get predictions
+    pred_ray = predictions['ray']  # (B, S, H_ray, W_ray, 6) - [directions, origins]
+    pred_depth = predictions['depth'][..., None]  # (B, S, H_depth, W_depth, 1)
+
+    # Get ground truth
+    gt_points = batch['world_points']  # (B, S, H, W, 3)
+    gt_points_mask = batch['valid_mask']  # (B, S, H, W)
+
     gt_points = check_and_fix_inf_nan(gt_points, "gt_points", hard_max=None)
-    
+
     if gt_points_mask.sum() < 100:
         # If there are less than 100 valid points, skip this batch
-        dummy_loss = (0.0 * pred_points).mean()
-        loss_dict = {f"loss_conf_point": dummy_loss,
-                    f"loss_reg_point": dummy_loss,
-                    f"loss_grad_point": dummy_loss,}
+        dummy_loss = (0.0 * gt_points).mean()
+        loss_dict = {
+            "loss_point": dummy_loss,
+        }
         return loss_dict
-    
-    # Compute confidence-weighted regression loss with optional gradient loss
-    loss_conf, loss_grad, loss_reg = regression_loss(pred_points, gt_points, gt_points_mask, conf=pred_points_conf,
-                                             gradient_loss_fn=gradient_loss_fn, gamma=gamma, alpha=alpha, valid_range=valid_range)
-    
+
+    # Extract ray components from predictions (pred_ray format: [directions, origins])
+    B, S, H_ray, W_ray, _ = pred_ray.shape
+    pred_directions = pred_ray[..., :3]  # (B, S, H_ray, W_ray, 3) - directions first
+    pred_origins = pred_ray[..., 3:]  # (B, S, H_ray, W_ray, 3) - origins second
+
+    pred_depth = check_and_fix_inf_nan(pred_depth, "pred_depth", hard_max=None)
+
+    # Target dims
+    _, _, H_gt, W_gt, _ = gt_points.shape
+    _, _, H_depth, W_depth, _ = pred_depth.shape
+
+    def _resize_bshwc(x, size_hw, mode="bilinear", align_corners=False):
+        """
+        Resize a (B, S, H, W, C) tensor to given (H, W).
+        """
+        if x.shape[-3:-1] == tuple(size_hw):
+            return x
+        B_, S_, H_, W_, C_ = x.shape
+        x_ = x.permute(0, 1, 4, 2, 3).reshape(B_ * S_, C_, H_, W_)
+        x_ = F.interpolate(x_, size=size_hw, mode=mode, align_corners=align_corners)
+        x_ = x_.reshape(B_, S_, C_, size_hw[0], size_hw[1]).permute(0, 1, 3, 4, 2)
+        return x_
+
+    # Resize ray map to match depth map size (user intention)
+    if (H_ray, W_ray) != (H_depth, W_depth):
+        pred_directions = _resize_bshwc(pred_directions, (H_depth, W_depth), mode="bilinear", align_corners=False)
+        pred_origins = _resize_bshwc(pred_origins, (H_depth, W_depth), mode="bilinear", align_corners=False)
+
+    # Directions should be unit-length (bilinear interpolation breaks normalization)
+    pred_directions = F.normalize(pred_directions, dim=-1, eps=1e-6)
+
+    # Project predicted rays with depth to get point cloud (at depth resolution)
+    pred_points = pred_origins + pred_directions * pred_depth  # (B, S, H_depth, W_depth, 3)
+    pred_points = check_and_fix_inf_nan(pred_points, "pred_points", hard_max=None)
+
+    # Align prediction point cloud to GT resolution if needed
+    if (H_depth, W_depth) != (H_gt, W_gt):
+        pred_points = _resize_bshwc(pred_points, (H_gt, W_gt), mode="bilinear", align_corners=False)
+
+    # Compute masked L1 loss between predicted and ground truth points
+    mask = gt_points_mask.to(dtype=torch.bool)
+    point_diff = (pred_points - gt_points).abs()  # (B, S, H_gt, W_gt, 3)
+    point_loss = point_diff[mask[..., None].expand_as(point_diff)].mean()
+
+    # Alternative: L1 loss per point, then mean
+    # point_loss = torch.norm(point_diff, dim=-1)[gt_points_mask].mean()
+
     loss_dict = {
-        f"loss_conf_point": loss_conf,
-        f"loss_reg_point": loss_reg,
-        f"loss_grad_point": loss_grad,
+        "loss_reg_point": point_loss,
     }
-    
+
     return loss_dict
 
 
@@ -595,7 +791,8 @@ def compute_depth_loss(predictions, batch, gamma=1.0, alpha=0.2, gradient_loss_f
 
     # NOTE: we put conf inside regression_loss so that we can also apply conf loss to the gradient loss in a multi-scale manner
     # this is hacky, but very easier to implement
-    loss_conf, loss_grad, loss_reg = regression_loss(pred_depth, gt_depth, gt_depth_mask, conf=pred_depth_conf,
+    # Use L1 version instead of L2
+    loss_conf, loss_grad, loss_reg = regression_loss_l1_with_gradient(pred_depth, gt_depth, gt_depth_mask, conf=pred_depth_conf,
                                              gradient_loss_fn=gradient_loss_fn, gamma=gamma, alpha=alpha, valid_range=valid_range)
 
     loss_dict = {

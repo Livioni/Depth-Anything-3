@@ -29,6 +29,7 @@ from accelerate.logging import get_logger
 from depth_anything_3.cfg import create_object, load_config
 from src.loss import MultitaskLoss
 from src.datasets import get_data_loader
+from src.utils.geometry import closed_form_inverse_se3
 
 # LoRA imports
 try:
@@ -40,6 +41,54 @@ except ImportError:
     logger.warning("peft library not available. LoRA training will be disabled.")
 
 logger = get_logger(__name__, log_level="INFO")
+
+
+def compute_gt_ray_map(w2c: torch.Tensor, intrinsics: torch.Tensor, rayH: int, rayW: int, 
+                       imgH: int, imgW: int, gt_pts3d_scale: torch.Tensor | None = None) -> torch.Tensor:
+    
+    B, S = w2c.shape[:2]  # B=3, S=6
+    # 将w2c reshape成 (B*S, 3, 4) 以便处理
+    w2c_reshaped = w2c.reshape(B * S, 3, 4)
+    # 应用逆变换得到c2w
+    c2w_reshaped = closed_form_inverse_se3(w2c_reshaped)  # 输出shape: (18, 4, 4)
+    # 将结果reshape回原来的batch和sequence维度
+    c2w = c2w_reshaped.reshape(B, S, 4, 4)
+    device, dtype = c2w.device, c2w.dtype
+
+    # 1) Pixel grid in the normalized 2x2 image convention (values in [0, 2])
+    dx = 1.0 / rayW
+    dy = 1.0 / rayH
+    x = torch.linspace(dx, 1.0 - dx, rayW, device=device, dtype=dtype)
+    y = torch.linspace(dy, 1.0 - dy, rayH, device=device, dtype=dtype)
+    y_grid, x_grid = torch.meshgrid(y, x, indexing="ij")  # (H, W)
+
+    fx_norm = intrinsics[..., 0, 0] / imgW
+    fy_norm = intrinsics[..., 1, 1] / imgH
+    cx_norm = intrinsics[..., 0, 2] / imgW
+    cy_norm = intrinsics[..., 1, 2] / imgH
+
+    x_grid = x_grid[None, None]  # (1,1,H,W)
+    y_grid = y_grid[None, None]
+    x_norm = (x_grid - cx_norm[..., None, None]) / (fx_norm[..., None, None])
+    y_norm = (y_grid - cy_norm[..., None, None]) / (fy_norm[..., None, None])
+    canonical_rays = torch.stack(
+        (x_norm, y_norm, torch.ones_like(x_norm)), dim=-1
+    ).expand(B, S, -1, -1, -1)  # (B, S, H, W, 3)
+
+    # 3) Apply camera rotation
+    R = c2w[..., :3, :3]
+    rays_transformed = torch.einsum("bsij,bshwj->bshwi", R, canonical_rays)
+
+    # 4) Attach translation (optionally scaled)
+    T = c2w[..., :3, 3]
+    if gt_pts3d_scale is not None:
+        T = T / gt_pts3d_scale.view(B, 1, 1)
+    T = T[..., None, None, :]  # (B, S, 1, 1, 3)
+    T = T.expand(-1, -1, rayH, rayW, -1)
+
+    ray_map = torch.cat([rays_transformed, T], dim=-1)
+
+    return ray_map
 
 
 def build_dataset(
@@ -293,15 +342,11 @@ def load_model(cfg: Any, device: torch.device):
     model = create_object(load_config(cfg.get("model_config", "src/depth_anything_3/configs/da3-giant.yaml")))
 
     # Load pretrained weights
-    try:
-        state_dict = load_file(cfg.get("model_checkpoint_path","checkpoints/da3-giant/model.safetensors"))
-        for k in list(state_dict.keys()):
-            if k.startswith('model.'):
-                state_dict[k[6:]] = state_dict.pop(k)
-        model.load_state_dict(state_dict, strict=False)
-    except Exception as e:
-        logger.warning(f"Failed to load pretrained weights: {e}")
-        logger.warning("Training from scratch...")
+    state_dict = load_file(cfg.get("model_checkpoint_path","checkpoints/da3-giant/model.safetensors"))
+    for k in list(state_dict.keys()):
+        if k.startswith('model.'):
+            state_dict[k[6:]] = state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
     
     # Apply LoRA if configured (before gradient checkpointing)
     if cfg.get("use_lora", False):
@@ -686,8 +731,13 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
             "weight": cfg.get("ray_loss_weight", 1.0),
             "loss_type": cfg.get("ray_loss_type", "l1")
         }
+        point={
+            "weight": cfg.get("point_loss_weight", 1.0),
+            "loss_type": cfg.get("point_loss_type", "l1")
+        }
     else:
         ray=None
+        point=None
         
     if not cfg.get("seg_head_freeze", True):
         seg_mask={
@@ -715,6 +765,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         camera=camera,
         depth=depth,
         ray=ray,
+        point=point,
         seg_mask=seg_mask,
         gaussian=gaussian
     )

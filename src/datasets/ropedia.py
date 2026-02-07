@@ -1,5 +1,11 @@
+# Copyright (C) 2024-present Naver Corporation. All rights reserved.
+# Licensed under CC BY-NC-SA 4.0 (non-commercial use only).
+#
+# --------------------------------------------------------
+# Dataloader for preprocessed hypersim dataset
+# See datasets_preprocess/preprocess_hypersim.py
+# --------------------------------------------------------
 import os.path as osp
-from posix import truncate
 import cv2, os
 import numpy as np
 import sys
@@ -9,57 +15,75 @@ import numpy as np
 import glob, math
 import random
 from PIL import Image
-import PIL
 import json
 import joblib
 
 from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
-from src.utils.geometry import depth_to_world_coords_points, closed_form_inverse_se3
+from src.utils.geometry import closed_form_inverse_se3, depth_to_world_coords_points
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
 from src.datasets.utils.misc import threshold_depth_map
-from src.datasets.utils.cropping import ImageList, camera_matrix_of_crop, bbox_from_intrinsics_in_out
 from src.utils.image import imread_cv2
-from visual_util import show_anns
-from pycocotools import mask as mask_utils
-from pathlib import Path
-
-try:
-    lanczos = PIL.Image.Resampling.LANCZOS
-    bicubic = PIL.Image.Resampling.BICUBIC
-except AttributeError:
-    lanczos = PIL.Image.LANCZOS
-    bicubic = PIL.Image.BICUBIC
 
 np.random.seed(125)
 torch.multiprocessing.set_sharing_strategy('file_system')
 
+def load_calibration_json(file_path):
+    """加载标定JSON文件"""
+    try:
+        with open(file_path, 'r') as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        print(f"加载标定文件失败: {e}")
+        sys.exit(1)
 
-def load_subject_masks(scene_dir: Path, split_idx: int):
+def extract_intrinsic_matrix(calibration_data):
     """
-    Returns
-    -------
-    masks : list[np.ndarray]  (H, W) bool
+    从标定数据中提取内参矩阵
+
+    Args:
+        calibration_data: 加载的JSON数据
+
+    Returns:
+        np.array: 3x3内参矩阵K
     """
-    seg_mask_list = []
-    segmask_path = scene_dir
-    with open(segmask_path, "r", encoding="utf-8") as f:
-        seg_masks = json.load(f)
-    for key in seg_masks.keys():
-        seg_mask = seg_masks[key]
-        seg_mask = mask_utils.decode(seg_mask["mask_rle"])
-        seg_mask_list.append(seg_mask)
+    try:
+        # 读取 undistort.cam01.K
+        k_params = calibration_data["undistort"]["cam01"]["K"]
 
-    return seg_mask_list
+        if len(k_params) != 4:
+            print(f"错误: 期望4个内参参数，得到 {len(k_params)} 个")
+            return None
 
-class RoboTwin(BaseStereoViewDataset):
+        # 解析内参参数
+        fx, fy, cx, cy = k_params
+
+        # 构建3x3内参矩阵
+        K = np.array([
+            [fx,  0, cx],
+            [ 0, fy, cy],
+            [ 0,  0,  1]
+        ], dtype=np.float32)
+
+        return K
+
+    except KeyError as e:
+        print(f"错误: 在标定数据中找不到键 {e}")
+        return None
+    except Exception as e:
+        print(f"提取内参矩阵失败: {e}")
+        return None
+    
+    
+class Ropedia(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='datasets/robotwin',
+                 dataset_location='datasets/ropedia',
                  dset='',
                  use_cache=False,
                  use_augs=False,
                  top_k=256,
-                 z_far=100,
+                 z_far=200,
                  quick=False,
                  verbose=False,
                  specify=False,
@@ -67,27 +91,25 @@ class RoboTwin(BaseStereoViewDataset):
                  **kwargs
                  ):
 
-        print('loading RoboTwin dataset...')
+        print('loading Ropedia dataset...')
         super().__init__(*args, **kwargs)
 
         # Initialize instance attributes
-        self.dataset_label = 'RoboTwin'
-        self.use_cache = use_cache
+        self.dataset_label = 'Ropedia'
         self.dset = dset
         self.top_k = top_k
-        self.specify = specify
         self.z_far = z_far
         self.verbose = verbose
+        self.specify = specify
+        self.use_augs = use_augs
+        self.use_cache = use_cache
+
         # Initialize data containers
         self.full_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
-        self.all_seg_mask = []
-        self.all_normal_paths = []
         self.all_extrinsic = []
         self.all_intrinsic = []
-        self.all_annotation_paths = []
-        self.max_depths = []  # default max depth
         self.rank = dict()
 
         # Find sequences
@@ -98,104 +120,102 @@ class RoboTwin(BaseStereoViewDataset):
 
         if self.verbose:
             print(self.sequences)
-        print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
-        
+        print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset))
+
         if self.use_cache:
-            dataset_location = 'annotations/robotwin_annotations'
+            dataset_location = 'annotations/ropedia_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
                 self.all_rgb_paths = json.load(file)
             with open(all_depth_paths_file, 'r', encoding='utf-8') as file:
-                self.all_depth_paths = json.load(file)       
+                self.all_depth_paths = json.load(file)
             self.all_rgb_paths = [self.all_rgb_paths[str(i)] for i in range(len(self.all_rgb_paths))]
             self.all_depth_paths = [self.all_depth_paths[str(i)] for i in range(len(self.all_depth_paths))]
             self.full_idxs = list(range(len(self.all_rgb_paths)))
             self.rank = joblib.load(os.path.join(dataset_location, dset, 'rankings.joblib'))
             self.all_extrinsic = joblib.load(os.path.join(dataset_location, dset, 'extrinsics.joblib'))
             self.all_intrinsic = joblib.load(os.path.join(dataset_location, dset, 'intrinsics.joblib'))
+
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
-            
+
         else:
-            
+
             for seq in self.sequences:
-                if self.verbose: 
+                if self.verbose:
                     print('seq', seq)
                     
-                sub_scenes = os.listdir(seq)
-                for sub_seq in sub_scenes:
-                    
-                    rgb_path = os.path.join(seq, sub_seq, 'images')
-                    depth_path = os.path.join(seq, sub_seq, 'depths')
-                    # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
-                    extrinsic_path = os.path.join(seq, sub_seq, 'extrinsics')
-                    intrinsic_path = os.path.join(seq, sub_seq, 'intrinsics')
-                    num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
-                    
-                    if num_frames < 24:
-                        print(f"Skipping sequence {seq} with only {num_frames} frames.")
-                        continue
-                    
-                    new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
-                    old_sequence_length = len(self.full_idxs)
-                    self.full_idxs.extend(new_sequence)
-                    
-                    all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')))
-                    all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')))
-                    all_extrinsic_paths = sorted(glob.glob(os.path.join(extrinsic_path, '*.npy')))
-                    all_intrinsic_paths = sorted(glob.glob(os.path.join(intrinsic_path, '*.npy')))
-                    self.all_rgb_paths.extend(all_rgb_paths)
-                    self.all_depth_paths.extend(all_depth_paths)
-                    
-                    N = len(self.full_idxs)
 
-                    all_extrinsic_numpy = []
-                    for extrinsic_path in all_extrinsic_paths:
-                        all_extrinsic_numpy.append(np.load(extrinsic_path).astype(np.float32))
-                        self.all_extrinsic.extend([np.load(extrinsic_path).astype(np.float32)])
-                    for intrinsic_path in all_intrinsic_paths:
-                        intrinsic_seq = np.load(intrinsic_path).astype(np.float32)
-                        self.all_intrinsic.extend([intrinsic_seq])
-                    
-                    assert len(self.all_rgb_paths) == N and \
-                        len(self.all_depth_paths) == N and \
+                rgb_path = os.path.join(seq, "images", "left")
+                depth_path = os.path.join(seq, "depths")
+                annotaions_file_path = os.path.join(seq, "extrinsics")
+                intrinsics_file_path = os.path.join(seq, "calibration.json")
+                num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
+
+                if num_frames < 24:
+                    print('skipping %s, too few images' % (seq))
+                    continue
+
+                new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
+                old_sequence_length = len(self.full_idxs)
+                self.full_idxs.extend(new_sequence)
+                self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png'))))
+                self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.npy'))))
+                seq_annotaions_path = sorted(glob.glob(os.path.join(annotaions_file_path, '*.npy')))
+
+                # load annotations
+                extrinsics_seq = []
+                #load intrinsics and extrinsics
+                for anno in seq_annotaions_path:
+                    extrinsics = np.load(anno).astype(np.float32)
+                    assert extrinsics.shape == (3, 4), f"Pose shape mismatch in {anno}: {extrinsics.shape}"
+                    self.all_extrinsic.extend([extrinsics])
+                    extrinsics_seq.append(extrinsics)
+                all_extrinsic_numpy = np.array(extrinsics_seq)
+                
+                calibration_data = load_calibration_json(intrinsics_file_path)
+                K = extract_intrinsic_matrix(calibration_data)
+                self.all_intrinsic.extend([K]*num_frames)
+
+                N = len(self.full_idxs)
+                assert len(self.all_rgb_paths) == N and \
+                        len(self.all_intrinsic) == N and \
                         len(self.all_extrinsic) == N and \
-                        len(self.all_intrinsic) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
+                        len(self.all_depth_paths) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
 
-                    assert len(all_extrinsic_numpy) != 0
-                    ranking, dists = compute_ranking(all_extrinsic_numpy, lambda_t=1.0, normalize=True, batched=True)
-                    ranking = np.array(ranking, dtype=np.int32)
-                    ranking += old_sequence_length
-                    for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
-                        self.rank[i] = ranking[ind]
-                    
-            # # 保存为 JSON 文件
-            os.makedirs(f'annotations/robotwin_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/robotwin_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/robotwin_annotations/{dset}/depth_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/robotwin_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/robotwin_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/robotwin_annotations/{dset}/rankings.joblib')
-            joblib.dump(self.all_seg_mask, f'annotations/robotwin_annotations/{dset}/seg_mask.joblib')
+                assert len(all_extrinsic_numpy) != 0
+                ranking, dists = compute_ranking(all_extrinsic_numpy, lambda_t=1.0, normalize=True, batched=True)
+                ranking = np.array(ranking, dtype=np.int32)
+                ranking += old_sequence_length
+                for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
+                    self.rank[i] = ranking[ind]
+
+            os.makedirs(f'annotations/ropedia_annotations/{dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/ropedia_annotations/{dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/ropedia_annotations/{dset}/depth_paths.json')
+            joblib.dump(self.all_extrinsic, f'annotations/ropedia_annotations/{dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/ropedia_annotations/{dset}/intrinsics.joblib')
+            joblib.dump(self.rank, f'annotations/ropedia_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
         path_dict = {i: path for i, path in enumerate(paths)}
         with open(filename, 'w') as f:
             json.dump(path_dict, f, indent=4)
-
+    
     def __len__(self):
-        return len(self.full_idxs)  
-
+        return len(self.full_idxs)
+    
     def _get_views(self, index, num, resolution, rng):
         # Get frame indices based on number of views needed
         if num != 1:
             anchor_frame = self.full_idxs[index]
-            rest_frame = self.rank[anchor_frame][:min(self.top_k, len(self.rank[anchor_frame]))]
+            top_k = min(self.top_k, len(self.rank[anchor_frame]))
+            rest_frame = self.rank[anchor_frame][:top_k]
 
             if self.specify:
-                L = len(rest_frame) // 2
-                step = max(1, math.ceil(L / (num)))
+                L = len(rest_frame)
+                step = max(1, math.floor(L / (num)))
                 idxs = list(range(step - 1, L, step))[:(num - 1)]
                 rest_frame_indexs = [rest_frame[i] for i in idxs]
                 if len(rest_frame_indexs) < (num - 1):
@@ -216,12 +236,14 @@ class RoboTwin(BaseStereoViewDataset):
         views = []
         for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
             # Load and preprocess images
-            rgb_image = Image.open(impath).convert("RGB")
-            depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0
+            rgb_image = imread_cv2(impath, cv2.IMREAD_COLOR)
+            depthmap = np.load(depthpath).astype(np.float32)
             depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
-            
+
+            depthmap = threshold_depth_map(depthmap, max_percentile=95, min_percentile=-1)
+
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
-                rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)  
+                rgb_image, depthmap, intrinsics, resolution, rng, info=impath)
 
             # Create view dictionary
             views.append({
@@ -237,17 +259,13 @@ class RoboTwin(BaseStereoViewDataset):
         return views
     
     def __getitem__(self, idx):
+        # Parse index tuple: (idx, ar_idx[, num])
         if isinstance(idx, tuple):
-            if len(idx) == 2:
-                idx, ar_idx = idx
-                num = 1
-                # the idx is specifying the aspect-ratio
-            else:
-                idx, ar_idx, num = idx
+            idx, ar_idx, *num_args = idx
+            num = num_args[0] if num_args else 1
         else:
             assert len(self._resolutions) == 1
-            num = 1
-            ar_idx = 0
+            ar_idx, num = 0, 1
 
         # set-up the rng
         if self.seed:  # reseed for each __getitem__
@@ -261,53 +279,52 @@ class RoboTwin(BaseStereoViewDataset):
         views = self._get_views(idx, num, resolution, self._rng)
         assert len(views) == num
 
-        # check data-types
+        # Process each view
         for v, view in enumerate(views):
-            assert 'pts3d' not in view, f"pts3d should not be there, they will be computed afterwards based on intrinsics+depthmap for view {view_name(view)}"
-            view['idx'] = (idx, ar_idx, v)
+            # Basic assertions
+            assert 'pts3d' not in view and 'valid_mask' not in view, \
+                f"pts3d/valid_mask should not be present in view {view_name(view)}"
+            assert 'camera_intrinsics' in view
+            assert np.isfinite(view['depthmap']).all(), f'NaN in depthmap for view {view_name(view)}'
 
-            # encode the image
-            width, height = view['img'].size
-            view['true_shape'] = np.int32((height, width))
+            # Set view metadata
+            view['idx'] = (idx, ar_idx, v)
+            view['z_far'] = self.z_far
+            view['true_shape'] = np.int32(view['img'].size[::-1])  # (height, width)
             view['img'] = self.transform(view['img'])
 
-            assert 'camera_intrinsics' in view
+            # Handle camera pose
             if 'camera_pose' not in view:
                 view['camera_pose'] = np.full((4, 4), np.nan, dtype=np.float32)
             else:
                 assert np.isfinite(view['camera_pose']).all(), f'NaN in camera pose for view {view_name(view)}'
-            assert 'pts3d' not in view
-            assert 'valid_mask' not in view
-            assert np.isfinite(view['depthmap']).all(), f'NaN in depthmap for view {view_name(view)}'
-            view['z_far'] = self.z_far
 
-            # check all datatypes
+            # Validate data types
             for key, val in view.items():
                 res, err_msg = is_good_type(key, val)
                 assert res, f"{err_msg} with {key}={val} for view {view_name(view)}"
-            K = view['camera_intrinsics']
 
+            # Compute 3D coordinates
             # view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
-            world_coords_points, cam_coords_points, point_mask = (
-                depth_to_world_coords_points(view['depthmap'], view['camera_pose'], view["camera_intrinsics"], z_far = self.z_far)
+            world_coords_points, cam_coords_points, point_mask = depth_to_world_coords_points(
+                view['depthmap'], view['camera_pose'], view['camera_intrinsics'], z_far=self.z_far
             )
             view['world_coords_points'] = world_coords_points
             view['cam_coords_points'] = cam_coords_points
             view['point_mask'] = point_mask
 
-          
         # last thing done!
         for view in views:
             # transpose to make sure all views are the same size
             transpose_to_landscape(view)
             # this allows to check whether the RNG is is the same state each time
             view['rng'] = int.from_bytes(self._rng.bytes(4), 'big')
-            
+
         # Define field mappings for data collection and stacking
         field_config = {
             'img': ('images', torch.stack),
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
-            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
             'world_coords_points': ('world_points', np.stack),
             'true_shape': ('true_shape', np.array),
@@ -332,12 +349,23 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/robotwin'  # Change this to the correct path
-    dset = ''
+    num_views = 10
     use_augs = False
-    num_views = 4
     n_views_list = range(num_views)
-    quick = True  # Set to True for quick testing
+
+    dataset = Ropedia(
+        dataset_location="datasets/ropedia",
+        dset='',
+        use_cache=False,
+        use_augs=use_augs,
+        top_k=50,
+        quick=False,
+        verbose=True,
+        resolution=(518, 378),
+        aug_crop=16,
+        aug_focal=1,
+        z_far=5,
+        seed=985)
 
     def visualize_scene(idx):
         views = dataset[idx]
@@ -356,29 +384,9 @@ if __name__ == "__main__":
                         color=(255, 0, 0),
                         image=colors,
                         cam_size=cam_size)
-        # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('robotwin-10.glb')
-        return 
+        return viz.save_glb('ropedia_scene.glb')
 
-    dataset = RoboTwin(
-        dataset_location=dataset_location,
-        dset = dset,
-        use_cache = False,
-        use_augs=use_augs,
-        top_k = 32,
-        quick=False,
-        verbose=True,
-        resolution=[(518,291)], 
-        aug_crop=16,
-        aug_focal=1,
-        z_far=10,
-        seed=985)
-
-
-    dataset[(0,0,10)]
-    # batch = dataset[(0, 0, 4)]
-    print("Dataset loaded successfully.")
-    # idx = random.randint(0, len(dataset)-1)
-    # print(f"Visualizing scene {idx}...")
-    visualize_scene((100,0,num_views))
+    dataset[(0, 0, num_views)]
+    visualize_scene((200, 0, num_views))
+    print('dataset loaded')

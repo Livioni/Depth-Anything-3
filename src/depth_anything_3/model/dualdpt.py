@@ -177,7 +177,7 @@ class DualDPT(nn.Module):
             Shapes:
               main:    [B, S, out_dim, H/down_ratio, W/down_ratio]
               main_cf: [B, S, 1,       H/down_ratio, W/down_ratio]
-              aux:     [B, S, 7,       H/down_ratio, W/down_ratio]
+              aux:     [B, S, 6,       H/down_ratio, W/down_ratio]
               aux_cf:  [B, S, 1,       H/down_ratio, W/down_ratio]
         """
         B, S, N, C = feats[0][0].shape

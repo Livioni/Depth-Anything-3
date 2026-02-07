@@ -14,17 +14,13 @@
 
 from __future__ import annotations
 
-import os
 import torch
 import torch.nn as nn
 from addict import Dict
 from omegaconf import DictConfig, OmegaConf
-import torchvision.transforms as T
 
 from depth_anything_3.cfg import create_object
 from depth_anything_3.model.utils.transform import pose_encoding_to_extri_intri
-from depth_anything_3.model.gaussian_splat_renderer import GaussianSplatRenderer
-from depth_anything_3.specs import Gaussians
 from depth_anything_3.utils.alignment import (
     apply_metric_scaling,
     compute_alignment_mask,
@@ -35,7 +31,7 @@ from depth_anything_3.utils.alignment import (
 )
 from depth_anything_3.utils.geometry import affine_inverse, as_homogeneous, map_pdf_to_opacity
 from depth_anything_3.utils.ray_utils import get_extrinsic_from_camray
-from depth_anything_3.model.utils.gs_renderer import render_3dgs
+
 
 def _wrap_cfg(cfg_obj):
     return OmegaConf.create(cfg_obj)
@@ -67,7 +63,7 @@ class DepthAnything3Net(nn.Module):
     # Patch size for feature extraction
     PATCH_SIZE = 14
 
-    def __init__(self, net, head, cam_dec=None, cam_enc=None, gs_head=None, gs_adapter=None, seg_head=None):
+    def __init__(self, net, head, cam_dec=None, cam_enc=None, gs_head=None, gs_adapter=None):
         """
         Initialize DepthAnything3Net with given yaml-initialized configuration.
         """
@@ -79,7 +75,6 @@ class DepthAnything3Net(nn.Module):
             self.cam_dec = (
                 cam_dec if isinstance(cam_dec, nn.Module) else create_object(_wrap_cfg(cam_dec))
             )
-        if cam_enc is not None:
             self.cam_enc = (
                 cam_enc if isinstance(cam_enc, nn.Module) else create_object(_wrap_cfg(cam_enc))
             )
@@ -101,14 +96,6 @@ class DepthAnything3Net(nn.Module):
                     gs_head["output_dim"] == gs_out_dim
                 ), f"gs_head output_dim should set to {gs_out_dim}, got {gs_head['output_dim']}"
                 self.gs_head = create_object(_wrap_cfg(gs_head))
-        self.seg_head = None
-        if seg_head is not None:
-            self.seg_head = (
-                seg_head if isinstance(seg_head, nn.Module) else create_object(_wrap_cfg(seg_head))
-            )
-
-        # Initialize Gaussian Splat Renderer
-        self.gs_renderer = GaussianSplatRenderer()
 
     def forward(
         self,
@@ -118,23 +105,26 @@ class DepthAnything3Net(nn.Module):
         export_feat_layers: list[int] | None = [],
         infer_gs: bool = False,
         use_ray_pose: bool = False,
-        step: int = 0,
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through the network.
 
         Args:
             x: Input images (B, N, 3, H, W)
-            extrinsics: Camera extrinsics (B, N, 4, 4) - unused
-            intrinsics: Camera intrinsics (B, N, 3, 3) - unused
+            extrinsics: Camera extrinsics (B, N, 4, 4) 
+            intrinsics: Camera intrinsics (B, N, 3, 3) 
             feat_layers: List of layer indices to extract features from
+            infer_gs: Enable Gaussian Splatting branch
+            use_ray_pose: Use ray-based pose estimation
+            ref_view_strategy: Strategy for selecting reference view
 
         Returns:
             Dictionary containing predictions and auxiliary features
         """
         # Extract features using backbone
         if extrinsics is not None:
-            cam_token = self.cam_enc(extrinsics, intrinsics, x.shape[-2:])
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                cam_token = self.cam_enc(extrinsics, intrinsics, x.shape[-2:])
         else:
             cam_token = None
 
@@ -144,20 +134,17 @@ class DepthAnything3Net(nn.Module):
         # feats = [[item for item in feat] for feat in feats]
         H, W = x.shape[-2], x.shape[-1]
 
-        # enable bf16 here to save memory
-        output = self._process_depth_head(feats, H, W)
-        
         # Process features through depth head
-        if use_ray_pose:
-            output = self._process_ray_pose_estimation(output, H, W)
-        else:
-            output = self._process_camera_estimation(feats, H, W, output)
-        if infer_gs:
-            output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
-            output = self.gs_renderer(output, x, H, W)
-        # Process segmentation head if available
-        if self.seg_head:
-            output = self._process_segmentation_head(feats, x, H, W, output)
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            output = self._process_depth_head(feats, H, W)
+            if use_ray_pose:
+                output = self._process_ray_pose_estimation(output, H, W)
+            else:
+                output = self._process_camera_estimation(feats, H, W, output)
+            if infer_gs:
+                output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
+        
+        # output = self._process_mono_sky_estimation(output)    
 
         # Extract auxiliary features if requested
         output.aux = self._extract_auxiliary_features(aux_feats, export_feat_layers, H, W)
@@ -203,7 +190,7 @@ class DepthAnything3Net(nn.Module):
                 output.ray_conf,
                 output.ray.shape[-3],
                 output.ray.shape[-2],
-                training = True
+                training = True,
             )
             pred_extrinsic = affine_inverse(pred_extrinsic) # w2c -> c2w
             pred_extrinsic = pred_extrinsic[:, :, :3, :]
@@ -212,8 +199,8 @@ class DepthAnything3Net(nn.Module):
             pred_intrinsic[:, :, 1, 1] = pred_focal_lengths[:, :, 1] / 2 * height
             pred_intrinsic[:, :, 0, 2] = pred_principal_points[:, :, 0] * width * 0.5
             pred_intrinsic[:, :, 1, 2] = pred_principal_points[:, :, 1] * height * 0.5
-            del output.ray
-            del output.ray_conf
+            # del output.ray
+            # del output.ray_conf
             output.extrinsics = pred_extrinsic
             output.intrinsics = pred_intrinsic
         return output
@@ -393,6 +380,7 @@ class NestedDepthAnything3Net(nn.Module):
         export_feat_layers: list[int] | None = [],
         infer_gs: bool = False,
         use_ray_pose: bool = False,
+        ref_view_strategy: str = "saddle_balanced",
     ) -> Dict[str, torch.Tensor]:
         """
         Forward pass through both branches with metric scaling alignment.
@@ -402,16 +390,18 @@ class NestedDepthAnything3Net(nn.Module):
             extrinsics: Camera extrinsics (B, N, 4, 4) - unused
             intrinsics: Camera intrinsics (B, N, 3, 3) - unused
             feat_layers: List of layer indices to extract features from
-            metric_feat: Whether to use metric features (unused)
+            infer_gs: Enable Gaussian Splatting branch
+            use_ray_pose: Use ray-based pose estimation
+            ref_view_strategy: Strategy for selecting reference view
 
         Returns:
             Dictionary containing aligned depth predictions and camera parameters
         """
         # Get predictions from both branches
         output = self.da3(
-            x, extrinsics, intrinsics, export_feat_layers=export_feat_layers, infer_gs=infer_gs, use_ray_pose=use_ray_pose
+            x, extrinsics, intrinsics, export_feat_layers=export_feat_layers, infer_gs=infer_gs, use_ray_pose=use_ray_pose, ref_view_strategy=ref_view_strategy
         )
-        metric_output = self.da3_metric(x, infer_gs=infer_gs)
+        metric_output = self.da3_metric(x)
 
         # Apply metric scaling and alignment
         output = self._apply_metric_scaling(output, metric_output)

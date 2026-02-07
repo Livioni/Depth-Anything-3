@@ -17,10 +17,6 @@ from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
 from src.utils.geometry import closed_form_inverse_se3
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
-from src.datasets.utils.misc import threshold_depth_map
-from src.datasets.utils.cropping import ImageList, camera_matrix_of_crop, bbox_from_intrinsics_in_out
-from src.utils.image import imread_cv2
-from visual_util import show_anns
 from pycocotools import mask as mask_utils
 from pathlib import Path
 
@@ -267,13 +263,13 @@ class RLBench(BaseStereoViewDataset):
                         self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/droid_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/droid_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/droid_annotations/{dset}/depth_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/droid_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/droid_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/droid_annotations/{dset}/rankings.joblib')
-            joblib.dump(self.all_seg_mask, f'annotations/droid_annotations/{dset}/seg_mask.joblib')
+            os.makedirs(f'annotations/rlbench_annotations/{dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/rlbench_annotations/{dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/rlbench_annotations/{dset}/depth_paths.json')
+            joblib.dump(self.all_extrinsic, f'annotations/rlbench_annotations/{dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/rlbench_annotations/{dset}/intrinsics.joblib')
+            joblib.dump(self.rank, f'annotations/rlbench_annotations/{dset}/rankings.joblib')
+            joblib.dump(self.all_seg_mask, f'annotations/rlbench_annotations/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -437,7 +433,7 @@ class RLBench(BaseStereoViewDataset):
         field_config = {
             'img': ('images', torch.stack),
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
-            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
             'world_coords_points': ('world_points', np.stack),
             'true_shape': ('true_shape', np.array),

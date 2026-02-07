@@ -460,7 +460,7 @@ class Re10K(BaseStereoViewDataset):
         # Define field mappings for data collection and stacking
         field_config = {
             'img': ('images', torch.stack),
-            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
             'true_shape': ('true_shape', np.array),
             'gt_mask': ('mask_gt', np.stack),

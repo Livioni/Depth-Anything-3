@@ -31,6 +31,7 @@ from train_utils import (
     load_model,
     build_optimizer,
     build_loss_criterion,
+    compute_gt_ray_map,
 )
 
 logger = get_logger(__name__, log_level="INFO")
@@ -252,7 +253,7 @@ if __name__ == '__main__':
             )
             
             # According to def _normalize_extrinsics(self, ex_t: torch.Tensor | None) in src/depth_anything_3/api.py
-            extra_input_extrinsic_gt = normalize_extrinsics(batch['extrinsic'])
+            extra_input_extrinsic_gt, extra_input_extrinsic_scale_factor = normalize_extrinsics(batch['extrinsic'])
             
             # Update batch with normalized values for loss computation
             batch['extrinsic'] = new_extrinsics
@@ -272,6 +273,12 @@ if __name__ == '__main__':
                 predictions = model(x=batch['images'], 
                                     infer_gs=infer_gs,
                                     use_ray_pose=use_ray_pose)
+            
+            # prepare gt ray map here
+            ray_map = compute_gt_ray_map(new_extrinsics, batch['intrinsic'], 
+                                predictions.ray.shape[-3], predictions.ray.shape[-2], 
+                                batch['images'].shape[-2], batch['images'].shape[-1])
+            batch['ray_map'] = ray_map
             
             # Compute loss (disable autocast for loss computation)
             loss_details = {}

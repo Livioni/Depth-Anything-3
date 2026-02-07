@@ -273,7 +273,7 @@ class ARKitScenesHigh(BaseStereoViewDataset):
         field_config = {
             'img': ('images', torch.stack),
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
-            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
             'world_coords_points': ('world_points', np.stack),
             'true_shape': ('true_shape', np.array),

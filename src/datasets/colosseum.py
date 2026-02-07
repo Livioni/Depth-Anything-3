@@ -1,5 +1,4 @@
 import os.path as osp
-from posix import truncate
 import cv2, os
 import numpy as np
 import sys
@@ -15,12 +14,8 @@ import joblib
 
 from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
-from src.utils.geometry import depth_to_world_coords_points, closed_form_inverse_se3
+from src.utils.geometry import closed_form_inverse_se3
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
-from src.datasets.utils.misc import threshold_depth_map
-from src.datasets.utils.cropping import ImageList, camera_matrix_of_crop, bbox_from_intrinsics_in_out
-from src.utils.image import imread_cv2
-from visual_util import show_anns
 from pycocotools import mask as mask_utils
 from pathlib import Path
 
@@ -33,6 +28,103 @@ except AttributeError:
 
 np.random.seed(125)
 torch.multiprocessing.set_sharing_strategy('file_system')
+
+
+def _create_uniform_pixel_coords_image(shape_hw: tuple[int, int]) -> np.ndarray:
+    """Create (H,W,3) array with pixel coords (u,v,1)."""
+    H, W = shape_hw
+    u, v = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    ones = np.ones_like(u, dtype=np.float32)
+    return np.stack([u, v, ones], axis=-1)  # (H,W,3)
+
+
+def _pixel_to_world_coords(
+    pixel_coords_times_depth: np.ndarray, cam_proj_mat_inv_3x4: np.ndarray
+) -> np.ndarray:
+    """
+    Args:
+        pixel_coords_times_depth: (H,W,3) with [u*z, v*z, z]
+        cam_proj_mat_inv_3x4: (3,4) = first 3 rows of inv([K*[R|t]; 0 0 0 1])
+    Returns:
+        world_coords_homo: (H,W,4) with last coord = 1
+    """
+    H, W, _ = pixel_coords_times_depth.shape
+    pc = pixel_coords_times_depth.reshape(-1, 3)
+    pc_h = np.concatenate([pc, np.ones((pc.shape[0], 1), dtype=pc.dtype)], axis=-1)  # (N,4)
+    world_xyz = pc_h @ cam_proj_mat_inv_3x4.T  # (N,3)
+    world_h = np.concatenate([world_xyz, np.ones((world_xyz.shape[0], 1), dtype=world_xyz.dtype)], axis=-1)
+    return world_h.reshape(H, W, 4)
+
+
+def depth_to_world_pointcloud_rlbench(
+    depth: np.ndarray,
+    extrinsics_c2w: np.ndarray,
+    intrinsics: np.ndarray,
+    z_far: float = 0.0,
+    eps: float = 1e-8,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    RLBench/PyRep-compatible depth->pointcloud conversion.
+
+    This follows the same math as:
+        VisionSensor.pointcloud_from_depth_and_camera_params(depth, extrinsics, intrinsics)
+
+    Args:
+        depth: (H,W) depth in meters
+        extrinsics_c2w: (4,4) or (3,4) camera-to-world transform
+        intrinsics: (3,3)
+    Returns:
+        world_coords_points: (H,W,3)
+        cam_coords_points:   (H,W,3) in OpenCV convention (x right, y down, z forward)
+        point_mask:          (H,W) valid mask
+    """
+    if depth is None:
+        return None, None, None
+
+    depth = np.asarray(depth, dtype=np.float32)
+    intrinsics = np.asarray(intrinsics, dtype=np.float32)
+    extr = np.asarray(extrinsics_c2w, dtype=np.float32)
+    if extr.shape == (3, 4):
+        extr = np.vstack([extr, np.array([0, 0, 0, 1], dtype=np.float32)])
+    if extr.shape != (4, 4):
+        raise ValueError(f"extrinsics_c2w must be (4,4) or (3,4), got {extr.shape}")
+    if intrinsics.shape != (3, 3):
+        raise ValueError(f"intrinsics must be (3,3), got {intrinsics.shape}")
+
+    point_mask = np.isfinite(depth) & (depth > eps)
+    if z_far and z_far > 0:
+        point_mask &= (depth < z_far)
+
+    # Camera-frame point map (standard pinhole; matches depthmap_to_camera_coordinates)
+    H, W = depth.shape
+    fu, fv = intrinsics[0, 0], intrinsics[1, 1]
+    cu, cv = intrinsics[0, 2], intrinsics[1, 2]
+    u, v = np.meshgrid(np.arange(W, dtype=np.float32), np.arange(H, dtype=np.float32))
+    x_cam = (u - cu) * depth / fu
+    y_cam = (v - cv) * depth / fv
+    z_cam = depth
+    cam_coords_points = np.stack([x_cam, y_cam, z_cam], axis=-1).astype(np.float32)
+
+    # PyRep-style world reconstruction using camera projection inversion.
+    upc = _create_uniform_pixel_coords_image(depth.shape)  # (H,W,3) = [u,v,1]
+    pc = upc * depth[..., None]  # (H,W,3) = [u*z, v*z, z]
+
+    # Convert provided c2w to w2c: [R^T | -R^T C]
+    C = extr[:3, 3:4]  # (3,1)
+    R = extr[:3, :3]   # (3,3)
+    R_inv = R.T
+    t_w2c = -R_inv @ C
+    extr_w2c_3x4 = np.concatenate([R_inv, t_w2c], axis=-1)  # (3,4)
+
+    cam_proj_mat = intrinsics @ extr_w2c_3x4  # (3,4)
+    cam_proj_mat_homo = np.concatenate(
+        [cam_proj_mat, np.array([[0, 0, 0, 1]], dtype=np.float32)], axis=0
+    )  # (4,4)
+    cam_proj_mat_inv = np.linalg.inv(cam_proj_mat_homo)[:3]  # (3,4)
+    world_coords_homo = _pixel_to_world_coords(pc, cam_proj_mat_inv)  # (H,W,4)
+    world_coords_points = world_coords_homo[..., :3].astype(np.float32)
+
+    return world_coords_points, cam_coords_points, point_mask
 
 
 def load_subject_masks(scene_dir: Path, split_idx: int):
@@ -52,9 +144,9 @@ def load_subject_masks(scene_dir: Path, split_idx: int):
 
     return seg_mask_list
 
-class RoboTwin(BaseStereoViewDataset):
+class Colosseum(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='datasets/robotwin',
+                 dataset_location='datasets/colosseum_wrist_data',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -67,11 +159,11 @@ class RoboTwin(BaseStereoViewDataset):
                  **kwargs
                  ):
 
-        print('loading RoboTwin dataset...')
+        print('loading Colosseum dataset...')
         super().__init__(*args, **kwargs)
 
         # Initialize instance attributes
-        self.dataset_label = 'RoboTwin'
+        self.dataset_label = 'Colosseum'
         self.use_cache = use_cache
         self.dset = dset
         self.top_k = top_k
@@ -101,7 +193,7 @@ class RoboTwin(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/robotwin_annotations'
+            dataset_location = 'annotations/colosseum_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -122,18 +214,20 @@ class RoboTwin(BaseStereoViewDataset):
                 if self.verbose: 
                     print('seq', seq)
                     
-                sub_scenes = os.listdir(seq)
+                sub_scenes = sorted(os.listdir(seq))    
                 for sub_seq in sub_scenes:
+                    print('sub_seq', sub_seq)
                     
                     rgb_path = os.path.join(seq, sub_seq, 'images')
-                    depth_path = os.path.join(seq, sub_seq, 'depths')
+                    depth_path = os.path.join(seq, sub_seq, 'depth')
                     # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
-                    extrinsic_path = os.path.join(seq, sub_seq, 'extrinsics')
-                    intrinsic_path = os.path.join(seq, sub_seq, 'intrinsics')
+                    extrinsic_path = os.path.join(seq, sub_seq, 'pose')
+                    intrinsic_path = os.path.join(seq, sub_seq, 'intrinsic')
                     num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
                     
                     if num_frames < 24:
-                        print(f"Skipping sequence {seq} with only {num_frames} frames.")
+                        
+                        print(f"Skipping sequence {seq} {sub_seq} with only {num_frames} frames.")
                         continue
                     
                     new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
@@ -170,19 +264,47 @@ class RoboTwin(BaseStereoViewDataset):
                         self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/robotwin_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/robotwin_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/robotwin_annotations/{dset}/depth_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/robotwin_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/robotwin_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/robotwin_annotations/{dset}/rankings.joblib')
-            joblib.dump(self.all_seg_mask, f'annotations/robotwin_annotations/{dset}/seg_mask.joblib')
+            os.makedirs(f'annotations/colosseum_annotations/{dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/colosseum_annotations/{dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/colosseum_annotations/{dset}/depth_paths.json')
+            joblib.dump(self.all_extrinsic, f'annotations/colosseum_annotations/{dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/colosseum_annotations/{dset}/intrinsics.joblib')
+            joblib.dump(self.rank, f'annotations/colosseum_annotations/{dset}/rankings.joblib')
+            joblib.dump(self.all_seg_mask, f'annotations/colosseum_annotations/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
         path_dict = {i: path for i, path in enumerate(paths)}
         with open(filename, 'w') as f:
             json.dump(path_dict, f, indent=4)
+
+    def _pyrep_to_opencv_intrinsics(self, rgb_image: Image.Image, depthmap: np.ndarray, intrinsics: np.ndarray):
+        """
+        Convert PyRep intrinsics (fx/fy negative, origin top-left) to OpenCV convention.
+        If fx or fy is negative, flip the corresponding axis on both rgb and depth and
+        shift the principal point accordingly while taking |f|.
+        """
+        K = intrinsics.copy()
+        fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+        W, H = rgb_image.size  # PIL gives (width, height)
+
+        # Horizontal flip if fx is negative
+        if fx < 0:
+            rgb_image = rgb_image.transpose(Image.FLIP_LEFT_RIGHT)
+            depthmap = np.flip(depthmap, axis=1)
+            cx = (W - 1) - cx
+            fx = abs(fx)
+
+        # Vertical flip if fy is negative
+        if fy < 0:
+            rgb_image = rgb_image.transpose(Image.FLIP_TOP_BOTTOM)
+            depthmap = np.flip(depthmap, axis=0)
+            cy = (H - 1) - cy
+            fy = abs(fy)
+
+        K[0, 0], K[1, 1] = fx, fy
+        K[0, 2], K[1, 2] = cx, cy
+        return rgb_image, depthmap, K.astype(np.float32)
 
     def __len__(self):
         return len(self.full_idxs)  
@@ -217,8 +339,10 @@ class RoboTwin(BaseStereoViewDataset):
         for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
             # Load and preprocess images
             rgb_image = Image.open(impath).convert("RGB")
-            depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0
-            depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
+            # Load depth map as uint16 to preserve full precision
+            depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32)
+            depthmap = depthmap / 1000.0  # Convert from mm to meters
+            rgb_image, depthmap, intrinsics = self._pyrep_to_opencv_intrinsics(rgb_image, depthmap, intrinsics)
             
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)  
@@ -287,10 +411,13 @@ class RoboTwin(BaseStereoViewDataset):
                 assert res, f"{err_msg} with {key}={val} for view {view_name(view)}"
             K = view['camera_intrinsics']
 
-            # view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
-            world_coords_points, cam_coords_points, point_mask = (
-                depth_to_world_coords_points(view['depthmap'], view['camera_pose'], view["camera_intrinsics"], z_far = self.z_far)
+            world_coords_points, cam_coords_points, point_mask = depth_to_world_pointcloud_rlbench(
+                view['depthmap'],
+                view['camera_pose'],  # RLBench pose is stored as camera-to-world
+                view["camera_intrinsics"],
+                z_far=self.z_far,
             )
+            view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
             view['world_coords_points'] = world_coords_points
             view['cam_coords_points'] = cam_coords_points
             view['point_mask'] = point_mask
@@ -332,7 +459,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/robotwin'  # Change this to the correct path
+    dataset_location = 'datasets/colosseum_wrist_data'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -358,18 +485,18 @@ if __name__ == "__main__":
                         cam_size=cam_size)
         # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('robotwin-10.glb')
+        viz.save_glb('colosseum-0.glb')
         return 
 
-    dataset = RoboTwin(
+    dataset = Colosseum(
         dataset_location=dataset_location,
         dset = dset,
         use_cache = False,
         use_augs=use_augs,
-        top_k = 32,
+        top_k = 64,
         quick=False,
         verbose=True,
-        resolution=[(518,291)], 
+        resolution=[(518,518)], 
         aug_crop=16,
         aug_focal=1,
         z_far=10,
@@ -381,4 +508,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((100,0,num_views))
+    visualize_scene((0,0,num_views))

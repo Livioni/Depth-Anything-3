@@ -579,7 +579,7 @@ def normalize_extrinsics(ex_t: torch.Tensor | None) -> torch.Tensor | None:
     if original_shape[-2] == 3:
         ex_t_norm = ex_t_norm[..., :3, :]
     
-    return ex_t_norm
+    return ex_t_norm, scale_factor
 
 def generate_rays_from_batch(
     images_shape: tuple[int, ...],

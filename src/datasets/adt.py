@@ -17,11 +17,6 @@ from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
 from src.utils.geometry import depth_to_world_coords_points, closed_form_inverse_se3
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
-from src.datasets.utils.misc import threshold_depth_map
-from src.datasets.utils.cropping import ImageList, camera_matrix_of_crop, bbox_from_intrinsics_in_out
-from src.utils.image import imread_cv2
-from visual_util import show_anns
-from pycocotools import mask as mask_utils
 from pathlib import Path
 
 try:
@@ -315,7 +310,7 @@ class ADT(BaseStereoViewDataset):
         field_config = {
             'img': ('images', torch.stack),
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
-            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x]), 'camera_pose'),
+            'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
             'world_coords_points': ('world_points', np.stack),
             'true_shape': ('true_shape', np.array),
@@ -340,7 +335,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/ADT'  # Change this to the correct path
+    dataset_location = 'datasets/adt'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
