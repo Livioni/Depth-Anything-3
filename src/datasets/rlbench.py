@@ -458,7 +458,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/colosseum_wrist_data'  # Change this to the correct path
+    dataset_location = 'datasets/rlbench'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -507,4 +507,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((0,0,num_views))
+    # visualize_scene((0,0,num_views))

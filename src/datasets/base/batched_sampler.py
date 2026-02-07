@@ -74,6 +74,38 @@ def round_by(total, multiple, up=False):
         total = total + multiple-1
     return (total//multiple) * multiple
 
+class TestSampler(BatchedRandomSampler):
+    def __init__(self, dataset, batch_size, test_batch_size,
+                 pool_size, world_size=1, rank=0, drop_last=True, epoch=0):
+        super().__init__(dataset, batch_size, pool_size, world_size, rank, drop_last)
+        self.batch_size = batch_size
+        self.test_batch_size = test_batch_size
+        self.epoch = epoch
+
+    def __iter__(self):
+        # prepare RNG
+        if self.epoch is None:
+            assert self.world_size == 1 and self.rank == 0, 'use set_epoch() if distributed mode is used'
+            seed = int(torch.empty((), dtype=torch.int64).random_().item())
+        else:
+            seed = self.epoch + 777
+        rng = np.random.default_rng(seed=seed)
+
+        # 随机打乱 sample 索引
+        sample_idxs = np.arange(self.total_size)
+        rng.shuffle(sample_idxs)
+
+        # 随机生成 feat_idx（每个 batch 内相同）
+        n_batches = (self.total_size + self.batch_size - 1) // self.batch_size
+        feat_idxs = rng.integers(self.pool_size, size=n_batches)
+        feat_idxs = np.broadcast_to(feat_idxs[:, None], (n_batches, self.batch_size))
+        feat_idxs = feat_idxs.ravel()[:self.total_size]
+
+        # 返回 (sample_idx, feat_idx, test_batch_size)
+        yield from (
+            (idx, feat, self.test_batch_size)
+            for idx, feat in zip(sample_idxs, feat_idxs)
+        )
 
 class AnchorFrameSampler(BatchedRandomSampler):
     def __init__(self, dataset, batch_size, pool_size, world_size=1,

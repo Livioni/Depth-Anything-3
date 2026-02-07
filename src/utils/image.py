@@ -28,6 +28,39 @@ ImgNorm = tvf.Compose([tvf.ToTensor(),tvf.Normalize(mean=[0.485, 0.456, 0.406],
 ToTensor = tvf.ToTensor()
 TAG_FLOAT = 202021.25
 
+def denormalize_image(normalized_images):
+    """
+    反归一化ImageNet标准化后的图像
+    支持多种输入形状：(B, C, H, W) 或 (B, T, C, H, W) 等
+    Args:
+        normalized_images: numpy数组，已归一化的图像数据
+    Returns:
+        denormalized_images: numpy数组，范围在[0,1]
+    """
+    # ImageNet标准化参数
+    mean = np.array([0.485, 0.456, 0.406])
+    std = np.array([0.229, 0.224, 0.225])
+
+    # 确定输入形状并相应地扩展mean和std
+    # 假设通道维度是倒数第3维 (..., C, H, W)
+    shape = normalized_images.shape
+    if len(shape) == 4:  # (B, C, H, W)
+        mean = mean.reshape(1, 3, 1, 1)
+        std = std.reshape(1, 3, 1, 1)
+    elif len(shape) == 5:  # (B, T, C, H, W)
+        mean = mean.reshape(1, 1, 3, 1, 1)
+        std = std.reshape(1, 1, 3, 1, 1)
+    else:
+        raise ValueError(f"Unsupported image shape: {shape}")
+
+    # 反归一化：original = normalized * std + mean
+    denormalized = normalized_images * std + mean
+
+    # 确保值在[0,1]范围内
+    denormalized = np.clip(denormalized, 0, 1)
+
+    return denormalized
+
 def depth_read(filename):
     """ Read depth data from file, return as numpy array. """
     f = open(filename,'rb')

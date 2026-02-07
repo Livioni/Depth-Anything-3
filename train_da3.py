@@ -16,6 +16,7 @@ from src.utils.configs import parse_configs
 from src.datasets.utils.misc import merge_dicts
 from src.utils.misc import select_first_batch
 from src.train_utils.normalization import normalize_camera_extrinsics_and_points_batch
+from src.utils.image import denormalize_image
 from src.depth_anything_3.utils.geometry import normalize_extrinsics
 from visual_util import (
     predictions_to_glb,
@@ -347,7 +348,8 @@ if __name__ == '__main__':
                         with torch.no_grad():
                             predictions_0 = select_first_batch(predictions)
                             get_world_points_from_depth(predictions_0)
-                            
+                            denormalized_images = denormalize_image(predictions_0["images"])
+                            predictions_0["images"] = denormalized_images
                             # Convert predictions to GLB format
                             glbscene = predictions_to_glb(
                                 predictions_0,

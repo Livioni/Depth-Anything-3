@@ -11,7 +11,7 @@ from .colosseum import Colosseum # noqa
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
 
-def get_data_loader(dataset, batch_size, num_workers=8,
+def get_data_loader(dataset, seq_len=None, batch_size=None, num_workers=8,
                     shuffle=True, drop_last=True, pin_mem=True):
     import torch
     from src.datasets.utils.misc import get_world_size, get_rank
@@ -22,7 +22,7 @@ def get_data_loader(dataset, batch_size, num_workers=8,
         dataset = eval(dataset)
     
     try:
-        sampler = dataset.make_sampler(batch_size, shuffle=shuffle, world_size=world_size,
+        sampler = dataset.make_sampler(batch_size, seq_len=seq_len, shuffle=shuffle, world_size=world_size,
                                        rank=rank, drop_last=drop_last)
     except (AttributeError, NotImplementedError):
         # not avail for this dataset

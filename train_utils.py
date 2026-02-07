@@ -114,6 +114,7 @@ def build_dataset(
     
     loader = get_data_loader(
         dataset,
+        seq_len=None,
         batch_size=batch_size,
         num_workers=num_workers,
         pin_mem=True,

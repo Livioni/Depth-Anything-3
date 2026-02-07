@@ -5,7 +5,7 @@
 # A dataset base class that you can easily resize and combine.
 # --------------------------------------------------------
 import numpy as np
-from src.datasets.base.batched_sampler import BatchedRandomSampler, AnchorFrameSampler
+from src.datasets.base.batched_sampler import TestSampler, AnchorFrameSampler
 
 class EasyDataset:
     """ a dataset that you can easily resize and combine.
@@ -30,9 +30,13 @@ class EasyDataset:
     def set_epoch(self, epoch):
         pass  # nothing to do by default
 
-    def make_sampler(self, batch_size, shuffle=True, 
+    def make_sampler(self, batch_size, seq_len=None, shuffle=True, 
                      world_size=1, rank=0, drop_last=True):
         num_of_aspect_ratios = len(self._resolutions)
+        if not (shuffle):
+            return TestSampler(self, batch_size, seq_len, 
+                               num_of_aspect_ratios, world_size=world_size, 
+                               rank=rank, drop_last=drop_last, epoch=0)
 
         return AnchorFrameSampler(self, batch_size, num_of_aspect_ratios, 
                                   world_size=world_size, 

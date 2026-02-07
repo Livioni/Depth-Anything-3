@@ -126,7 +126,7 @@ def apply_pca_colormap(image):
     # 这会恢复N个独立的视图，将 (N*H*W, 3) 转换回 (N, H, W, 3)。
     return image_colored.view(n, h, w, 3)
 
-def get_world_points_from_depth(predictions):
+def get_world_points_from_depth(predictions, gt_scale=1.0, depth_scale=1.0, **kwargs):
     # Convert tensors to numpy
     for key in predictions.keys():
         if isinstance(predictions[key], torch.Tensor):
@@ -134,22 +134,23 @@ def get_world_points_from_depth(predictions):
 
     # Generate world points from depth map
     # print("Computing world points from depth map...")
-    depth_map = predictions["depth"]  # (S, H, W, 1)
+    depth_map = predictions["depth"]  # (S, H, W, 1) or (S, H, W)
+    if depth_map is None:
+        return
+    # Optional scaling (kept for backward compatibility with older callers)
+    try:
+        depth_map = depth_map * float(gt_scale) / float(depth_scale)
+    except Exception:
+        pass
     world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsics"], predictions["intrinsics"])
     predictions["world_points_from_depth"] = world_points
 
 def predictions_to_ply(
     predictions,
     conf_thres=10,
-    gt_scale=1.0,
     filter_by_frames="all",
-    depth_scale=1.0,
     mask_black_bg=False,
     mask_white_bg=False,
-    use_gt=False,
-    show_cam=True,
-    mask_sky=False,
-    target_dir=None,
     prediction_mode="Predicted Pointmap",
     output_filename="point_cloud.ply"
 ) -> None:
@@ -196,20 +197,16 @@ def predictions_to_ply(
     else:
         if isinstance(predictions["depth"], np.ndarray):
             predictions["depth"] = torch.from_numpy(predictions["depth"])
-        # predictions["depth"] = predictions["depth"] * gt_scale.to(predictions["depth"].device) / depth_scale
-        if use_gt:
-            # Convert tensors to numpy
-            for key in predictions.keys():
-                if isinstance(predictions[key], torch.Tensor):
-                    predictions[key] = predictions[key].cpu().numpy().squeeze(0)  # remove batch dimension
+        # Convert tensors to numpy
+        for key in predictions.keys():
+            if isinstance(predictions[key], torch.Tensor):
+                predictions[key] = predictions[key].cpu().numpy().squeeze(0)  # remove batch dimension
 
-            # Generate world points from depth map
-            # print("Computing world points from depth map...")
-            depth_map = predictions["depth"]  # (S, H, W, 1)
-            world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsic"], predictions["intrinsic"])
-            predictions["world_points_from_depth"] = world_points
-        else:
-            get_world_points_from_depth(predictions, gt_scale=gt_scale)
+        # Generate world points from depth map
+        # print("Computing world points from depth map...")
+        depth_map = predictions["depth"]  # (S, H, W, 1)
+        world_points = unproject_depth_map_to_point_map(depth_map, predictions["extrinsic"], predictions["intrinsic"])
+        predictions["world_points_from_depth"] = world_points
         pred_world_points = predictions["world_points_from_depth"]
         pred_world_points_conf = predictions.get("depth_conf", np.ones_like(pred_world_points[..., 0]))
 
