@@ -29,5 +29,5 @@ vis_prediction_mode = "Ray+Depth"
 resolution = [(504, 280)]
 seq_len = 10
 
-test_dataset = f"100 @ RLBench(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ImgNorm, seed=985)"
+test_dataset = f"100 @ Vkitti(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ImgNorm, seed=985)"
 

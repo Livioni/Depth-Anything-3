@@ -8,6 +8,7 @@ from .adt import ADT # noqa
 from .hoi4d import HOI4D # noqa
 from .realm import Realm # noqa
 from .colosseum import Colosseum # noqa
+from .vkitti import Vkitti # noqa
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
 

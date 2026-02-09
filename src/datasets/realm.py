@@ -31,20 +31,22 @@ ToTensor = tvf.ToTensor()
 
 import numpy as np
 
-def ray_depth_to_z_depth(ray_depth_map, intrinsics):
+def ray_depth_to_z_depth(ray_depth_map, intrinsics, focal_scale: float = 1.0, pp_offset_xy=(0.0, 0.0)):
     """
     将ray depth转换为z-depth
 
     Args:
         ray_depth_map: 深度图，形状为(H, W)，值是ray depth
         intrinsics: 相机内参矩阵，形状为(3, 3)
+        focal_scale: 对 fx, fy 施加的缩放系数（<1 会增强边缘校正；>1 会减弱边缘校正）
+        pp_offset_xy: (dx, dy) 对 (cx, cy) 的像素偏移（用于试探性修正主点）
 
     Returns:
         z_depth_map: 转换后的z-depth图，形状为(H, W)
     """
     H, W = ray_depth_map.shape
-    fu, fv = intrinsics[0, 0], intrinsics[1, 1]  # focal lengths
-    cu, cv = intrinsics[0, 2], intrinsics[1, 2]  # principal point
+    fu, fv = intrinsics[0, 0] * focal_scale, intrinsics[1, 1] * focal_scale  # focal lengths
+    cu, cv = intrinsics[0, 2] + pp_offset_xy[0], intrinsics[1, 2] + pp_offset_xy[1]  # principal point
 
     # 生成像素坐标网格
     u, v = np.meshgrid(np.arange(W), np.arange(H))
@@ -61,35 +63,6 @@ def ray_depth_to_z_depth(ray_depth_map, intrinsics):
     return z_depth_map.astype(np.float32)
 
 
-def z_depth_to_ray_depth(z_depth_map, intrinsics):
-    """
-    将z-depth转换为ray depth（用于验证）
-
-    Args:
-        z_depth_map: 深度图，形状为(H, W)，值是z-depth
-        intrinsics: 相机内参矩阵，形状为(3, 3)
-
-    Returns:
-        ray_depth_map: 转换后的ray-depth图，形状为(H, W)
-    """
-    H, W = z_depth_map.shape
-    fu, fv = intrinsics[0, 0], intrinsics[1, 1]  # focal lengths
-    cu, cv = intrinsics[0, 2], intrinsics[1, 2]  # principal point
-
-    # 生成像素坐标网格
-    u, v = np.meshgrid(np.arange(W), np.arange(H))
-
-    # 计算从像素坐标到相机坐标系的归一化方向向量
-    x_norm = (u - cu) / fu
-    y_norm = (v - cv) / fv
-
-    # z-depth到ray depth的转换公式
-    # ray_depth = z_depth * sqrt(1 + x_norm^2 + y_norm^2)
-    norm_factor = np.sqrt(1 + x_norm**2 + y_norm**2)
-    ray_depth_map = z_depth_map * norm_factor
-
-    return ray_depth_map.astype(np.float32)
-
 def load_camera_info_from_json(json_path):
     """
     从REALM数据集的camera_params.json文件中读取相机信息
@@ -98,9 +71,10 @@ def load_camera_info_from_json(json_path):
         json_path (str): camera_params.json文件的路径
 
     Returns:
-        tuple: (intrinsics, extrinsics)
+        tuple: (intrinsics, extrinsics, depth_modes)
             - intrinsics: np.ndarray, 相机内参矩阵数组 [n, 3, 3]
             - extrinsics: np.ndarray, 外参矩阵数组 [n, 4, 4]
+            - depth_modes: list[str], 每帧对应的深度模式（"depth"=ray / "depth_linear"=z）
     """
     with open(json_path, 'r') as f:
         data = json.load(f)
@@ -109,9 +83,10 @@ def load_camera_info_from_json(json_path):
     num_frames = data['num_frames']
     camera_params_per_frame = data['camera_params_per_frame']
 
-    # 初始化内参和外参数组
+    # 初始化内参、外参和深度模式数组
     intrinsics = []
     extrinsics = []
+    depth_modes = []
 
     # 遍历每一帧
     for frame_idx in range(num_frames):
@@ -126,11 +101,15 @@ def load_camera_info_from_json(json_path):
         extrinsic_matrix = np.array(wrist_camera['extrinsic_matrix'], dtype=np.float32)
         extrinsics.append(extrinsic_matrix)
 
+        # 读取深度模式（老数据默认 "depth"）
+        depth_mode = wrist_camera.get("depth_mode", "depth")
+        depth_modes.append(depth_mode)
+
     # 转换为numpy数组
     intrinsics = np.array(intrinsics, dtype=np.float32)
     extrinsics = np.array(extrinsics, dtype=np.float32)
 
-    return intrinsics, extrinsics
+    return intrinsics, extrinsics, depth_modes
 
 class Realm(BaseStereoViewDataset):
     def __init__(self,
@@ -144,6 +123,8 @@ class Realm(BaseStereoViewDataset):
                  verbose=False,
                  specify=False,
                  load_mask=True,
+                 ray_to_z_focal_scale: float = 0.2,
+                 ray_to_z_pp_offset_xy=(0.0, 0.0),
                  *args,
                  **kwargs
                  ):
@@ -159,6 +140,9 @@ class Realm(BaseStereoViewDataset):
         self.z_far = z_far
         self.verbose = verbose
         self.use_cache = use_cache
+        # 用于“猜测矫正”的可调参数：当深度为 ray depth 时，ray->z 的换算以及后续反投影都会使用该调整后的内参
+        self.ray_to_z_focal_scale = float(ray_to_z_focal_scale)
+        self.ray_to_z_pp_offset_xy = tuple(ray_to_z_pp_offset_xy)
         # Initialize data containers
         self.full_idxs = []
         self.all_rgb_paths = []
@@ -167,6 +151,7 @@ class Realm(BaseStereoViewDataset):
         self.all_extrinsic = []
         self.all_intrinsic = []
         self.all_annotation_paths = []
+        self.all_depth_mode = []
         self.rank = dict()
 
 
@@ -221,9 +206,10 @@ class Realm(BaseStereoViewDataset):
                 N = len(self.full_idxs)
                 
                 
-                intrinsic, extrinsics = load_camera_info_from_json(annotaions_file_path)
+                intrinsic, extrinsics, depth_modes = load_camera_info_from_json(annotaions_file_path)
                 self.all_intrinsic.extend(intrinsic)
                 self.all_extrinsic.extend(extrinsics)
+                self.all_depth_mode.extend(depth_modes)
                 all_extrinsic_numpy = np.array(extrinsics)
                 
                 assert len(self.all_rgb_paths) == N and \
@@ -241,6 +227,7 @@ class Realm(BaseStereoViewDataset):
             joblib.dump(self.rank, f'annotations/realm_annotations/{self.dset}/rankings.joblib')
             joblib.dump(self.all_extrinsic, f'annotations/realm_annotations/{self.dset}/extrinsics.joblib')
             joblib.dump(self.all_intrinsic, f'annotations/realm_annotations/{self.dset}/intrinsics.joblib')
+            joblib.dump(self.all_depth_mode, f'annotations/realm_annotations/{self.dset}/depth_modes.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
     
@@ -273,6 +260,7 @@ class Realm(BaseStereoViewDataset):
             depth_paths = [self.all_depth_paths[i] for i in full_idx]
             camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
             intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
+            depth_mode_list = [self.all_depth_mode[i] for i in full_idx] if len(self.all_depth_mode) == len(self.all_extrinsic) else ["depth"] * len(full_idx)
             
         else:
             full_idx = self.full_idxs[index]
@@ -280,6 +268,7 @@ class Realm(BaseStereoViewDataset):
             depth_paths = [self.all_depth_paths[full_idx]]
             camera_pose_list = [self.all_extrinsic[full_idx]]
             intrinsics_list = [self.all_intrinsic[full_idx]]
+            depth_mode_list = [self.all_depth_mode[full_idx]] if len(self.all_depth_mode) == len(self.all_extrinsic) else ["depth"]
 
         views = []
         for i in range(num):
@@ -287,23 +276,27 @@ class Realm(BaseStereoViewDataset):
             depthpath = depth_paths[i]
             camera_pose = camera_pose_list[i]
             intrinsics = intrinsics_list[i]
+            depth_mode = depth_mode_list[i] if i < len(depth_mode_list) else "depth"
             # load image and depth
             rgb_image = Image.open(impath)
             rgb_image = rgb_image.convert("RGB")
             depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0
 
-            # 调试：检查深度图的统计信息
-            print(f"原始深度图统计: min={depthmap.min():.3f}, max={depthmap.max():.3f}, mean={depthmap.mean():.3f}")
-            print(f"图像中心深度: {depthmap[depthmap.shape[0]//2, depthmap.shape[1]//2]:.3f}")
-            print(f"图像边缘深度: {depthmap[0, 0]:.3f}, {depthmap[0, -1]:.3f}, {depthmap[-1, 0]:.3f}, {depthmap[-1, -1]:.3f}")
-
-            # 如果确认是ray depth，转换为z-depth
-            depthmap = ray_depth_to_z_depth(depthmap, intrinsics)
-
-            # 调试：检查转换后的深度图
-            print(f"转换后深度图统计: min={depthmap.min():.3f}, max={depthmap.max():.3f}, mean={depthmap.mean():.3f}")
-            print(f"转换后图像中心深度: {depthmap[depthmap.shape[0]//2, depthmap.shape[1]//2]:.3f}")
-            print(f"转换后图像边缘深度: {depthmap[0, 0]:.3f}, {depthmap[0, -1]:.3f}, {depthmap[-1, 0]:.3f}, {depthmap[-1, -1]:.3f}")
+            # OmniGibson depth conventions:
+            # - "depth"        => distance_to_camera (ray depth)
+            # - "depth_linear" => distance_to_image_plane (z-depth)
+            if depth_mode in ("depth", "distance_to_camera", "ray"):
+                # 试探性“矫正”：在 ray->z 转换和后续几何反投影中同时使用调整后的内参
+                intrinsics = intrinsics.copy().astype(np.float32)
+                intrinsics[0, 0] *= self.ray_to_z_focal_scale
+                intrinsics[1, 1] *= self.ray_to_z_focal_scale
+                intrinsics[0, 2] += self.ray_to_z_pp_offset_xy[0]
+                intrinsics[1, 2] += self.ray_to_z_pp_offset_xy[1]
+                depthmap = ray_depth_to_z_depth(depthmap, intrinsics, focal_scale=1.0, pp_offset_xy=(0.0, 0.0))
+            elif depth_mode in ("depth_linear", "distance_to_image_plane", "z"):
+                pass
+            else:
+                raise ValueError(f"Unknown depth_mode={depth_mode} for {impath}")
                         
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)        
@@ -418,7 +411,7 @@ if __name__ == "__main__":
     from src.utils.image import rgb
 
     use_augs = False
-    num_views = 5
+    num_views = 2
     n_views_list = range(num_views)
     top_k = 100
     quick = False  # Set to True for quick testing
@@ -442,7 +435,7 @@ if __name__ == "__main__":
                         image=colors,
                         cam_size=cam_size)
         # return viz.show()
-        viz.save_glb(f'realm_views_{num_views}_m.glb')
+        viz.save_glb(f'realm_views_{num_views}.glb')
         return
 
     dataset = Realm(
