@@ -134,11 +134,6 @@ def normalize_camera_extrinsics_and_points_batch(
     if new_world_points is not None:
         new_world_points = check_and_fix_inf_nan(new_world_points, "new_world_points", hard_max = None)
     new_depths = check_and_fix_inf_nan(new_depths, "new_depths", hard_max = None)
+    gt_scale_factor = avg_scale.view(-1, 1) if scale_by_points else None
 
-
-    return new_extrinsics, new_cam_points, new_world_points, new_depths
-
-
-
-
-
+    return new_extrinsics, new_cam_points, new_world_points, new_depths, gt_scale_factor

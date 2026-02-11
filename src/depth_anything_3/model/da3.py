@@ -63,7 +63,7 @@ class DepthAnything3Net(nn.Module):
     # Patch size for feature extraction
     PATCH_SIZE = 14
 
-    def __init__(self, net, head, cam_dec=None, cam_enc=None, gs_head=None, gs_adapter=None):
+    def __init__(self, net, head, cam_dec=None, cam_enc=None, gs_head=None, gs_adapter=None, scale_head=None):
         """
         Initialize DepthAnything3Net with given yaml-initialized configuration.
         """
@@ -71,6 +71,7 @@ class DepthAnything3Net(nn.Module):
         self.backbone = net if isinstance(net, nn.Module) else create_object(_wrap_cfg(net))
         self.head = head if isinstance(head, nn.Module) else create_object(_wrap_cfg(head))
         self.cam_dec, self.cam_enc = None, None
+        self.scale_head = None
         if cam_dec is not None:
             self.cam_dec = (
                 cam_dec if isinstance(cam_dec, nn.Module) else create_object(_wrap_cfg(cam_dec))
@@ -96,6 +97,8 @@ class DepthAnything3Net(nn.Module):
                     gs_head["output_dim"] == gs_out_dim
                 ), f"gs_head output_dim should set to {gs_out_dim}, got {gs_head['output_dim']}"
                 self.gs_head = create_object(_wrap_cfg(gs_head))
+        if scale_head is not None:
+            self.scale_head = create_object(_wrap_cfg(scale_head))
 
     def forward(
         self,
@@ -128,9 +131,14 @@ class DepthAnything3Net(nn.Module):
         else:
             cam_token = None
 
-        feats, aux_feats = self.backbone(
+        backbone_out = self.backbone(
             x, cam_token=cam_token, export_feat_layers=export_feat_layers
         )
+        scale_token = None
+        if isinstance(backbone_out, (tuple, list)) and len(backbone_out) == 3:
+            feats, aux_feats, scale_token = backbone_out
+        else:
+            feats, aux_feats = backbone_out
         # feats = [[item for item in feat] for feat in feats]
         H, W = x.shape[-2], x.shape[-1]
 
@@ -143,15 +151,15 @@ class DepthAnything3Net(nn.Module):
                 output = self._process_camera_estimation(feats, H, W, output)
             if infer_gs:
                 output = self._process_gs_head(feats, H, W, output, x, extrinsics, intrinsics)
+            if scale_token is not None:
+                output = self._process_scale_head(scale_token, output)
         
-        # output = self._process_mono_sky_estimation(output)    
+        return output
 
-        # Extract auxiliary features if requested
-        output.aux = self._extract_auxiliary_features(aux_feats, export_feat_layers, H, W)
-
-        # add image for visualization
-        output["images"] = x
-        
+    def _process_scale_head(self, scale_token: torch.Tensor, output: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Process scale head."""
+        scale_factor = self.scale_head(scale_token)
+        output.scale_factor = scale_factor
         return output
 
     def _process_mono_sky_estimation(

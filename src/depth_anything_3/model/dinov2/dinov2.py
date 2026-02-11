@@ -28,6 +28,7 @@ class DinoV2(nn.Module):
         qknorm_start: int = -1,
         rope_start: int = -1,
         cat_token: bool = True,
+        scale_token: bool = False,
         **kwargs,
     ):
         super().__init__()
@@ -38,6 +39,7 @@ class DinoV2(nn.Module):
         self.qknorm_start = qknorm_start
         self.rope_start = rope_start
         self.cat_token = cat_token
+        self.scale_token = scale_token
         encoder_map = {
             "vits": vit_small,
             "vitb": vit_base,
@@ -54,6 +56,7 @@ class DinoV2(nn.Module):
             qknorm_start=qknorm_start,
             rope_start=rope_start,
             cat_token=cat_token,
+            scale_token=scale_token,
         )
 
     def forward(self, x, **kwargs):

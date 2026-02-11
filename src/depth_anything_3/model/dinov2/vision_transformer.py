@@ -103,6 +103,7 @@ class DinoVisionTransformer(nn.Module):
         rope_freq=100,
         plus_cam_token=False,
         cat_token=True,
+        scale_token=False,
         use_gradient_checkpointing=False,
     ):
         """
@@ -132,7 +133,15 @@ class DinoVisionTransformer(nn.Module):
             block_prompt: (bool) whether to add ray embeddings to the block input
         """
         super().__init__()
-        self.patch_start_idx = 1
+        # token layout (local attention):
+        #   [cls/camera] [register_tokens...] [patch_tokens...]
+        #
+        # scale_token (if enabled) is a *scene-level* token:
+        #   - NOT prepended per-image (per S)
+        #   - ONLY prepended once per scene (per B) during GLOBAL attention
+        #
+        # patch_start_idx counts all non-patch tokens at the beginning
+        # of the *local* token sequence.
         norm_layer = nn.LayerNorm
         self.num_features = self.embed_dim = (
             embed_dim  # num_features for consistency with other models
@@ -141,7 +150,8 @@ class DinoVisionTransformer(nn.Module):
         self.qknorm_start = qknorm_start
         self.rope_start = rope_start
         self.cat_token = cat_token
-        self.num_tokens = 1
+        self.use_scale_token = bool(scale_token)
+        self.num_tokens = 1  # only cls participates in pos_embed; scale/register do not
         self.n_blocks = depth
         self.num_heads = num_heads
         self.patch_size = patch_size
@@ -157,6 +167,10 @@ class DinoVisionTransformer(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
         if self.alt_start != -1:
             self.camera_token = nn.Parameter(torch.randn(1, 2, embed_dim))
+        self.scale_token = (
+            nn.Parameter(torch.randn(1, 1, embed_dim)) if self.use_scale_token else None
+        )
+        self.patch_start_idx = 1 + self.num_register_tokens
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + self.num_tokens, embed_dim))
         assert num_register_tokens >= 0
         self.register_tokens = (
@@ -299,6 +313,25 @@ class DinoVisionTransformer(nn.Module):
         output, total_block_len, aux_output = [], len(self.blocks), []
         blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
         pos, pos_nodiff = self._prepare_rope(B, S, H, W, x.device)
+        cls_index = 0
+        if self.use_scale_token:
+            init_scale = kwargs.get("scale_token", None)
+            if init_scale is None:
+                assert self.scale_token is not None
+                self._last_scale_token = self.scale_token.expand(B, -1, -1)[:, 0]
+            else:
+                # accept (B,C) or (B,1,C)
+                if init_scale.dim() == 2:
+                    self._last_scale_token = init_scale
+                elif init_scale.dim() == 3:
+                    assert (
+                        init_scale.shape[1] == 1
+                    ), "scale_token expects shape (B,1,C) when 3D"
+                    self._last_scale_token = init_scale[:, 0]
+                else:
+                    raise ValueError(
+                        f"scale_token must be (B,C) or (B,1,C), got {init_scale.shape}"
+                    )
 
         for i, blk in enumerate(self.blocks):
             if i < self.rope_start or self.rope is None:
@@ -314,24 +347,39 @@ class DinoVisionTransformer(nn.Module):
                     ref_token = self.camera_token[:, :1].expand(B, -1, -1)
                     src_token = self.camera_token[:, 1:].expand(B, S - 1, -1)
                     cam_token = torch.cat([ref_token, src_token], dim=1)
-                x[:, :, 0] = cam_token
+                x[:, :, cls_index] = cam_token
 
             if self.alt_start != -1 and i >= self.alt_start and i % 2 == 1:
                 if self.use_gradient_checkpointing and self.training:
                     x = torch.utils.checkpoint.checkpoint(
                         self.process_attention,
-                        x, blk, "global", g_pos, kwargs.get("attn_mask", None),
+                        x,
+                        blk,
+                        "global",
+                        g_pos,
+                        kwargs.get("attn_mask", None),
+                        None,
                         use_reentrant=False
                     )
                 else:
                     x = self.process_attention(
-                        x, blk, "global", pos=g_pos, attn_mask=kwargs.get("attn_mask", None)
+                        x,
+                        blk,
+                        "global",
+                        pos=g_pos,
+                        attn_mask=kwargs.get("attn_mask", None),
+                        scale_token=None,
                     )
             else:
                 if self.use_gradient_checkpointing and self.training:
                     x = torch.utils.checkpoint.checkpoint(
                         self.process_attention,
-                        x, blk, "local", l_pos, None,
+                        x,
+                        blk,
+                        "local",
+                        l_pos,
+                        None,
+                        None,
                         use_reentrant=False
                     )
                 else:
@@ -340,12 +388,15 @@ class DinoVisionTransformer(nn.Module):
 
             if i in blocks_to_take:
                 out_x = torch.cat([local_x, x], dim=-1) if self.cat_token else x
-                output.append((out_x[:, :, 0], out_x))
+                # first return value is the cls/camera token (not the optional scale token)
+                output.append((out_x[:, :, cls_index], out_x))
             if i in export_feat_layers:
                 aux_output.append(x)
         return output, aux_output
 
-    def process_attention(self, x, block, attn_type="global", pos=None, attn_mask=None):
+    def process_attention(
+        self, x, block, attn_type="global", pos=None, attn_mask=None, scale_token=None
+    ):
         b, s, n = x.shape[:3]
         if attn_type == "local":
             x = rearrange(x, "b s n c -> (b s) n c")
@@ -355,6 +406,45 @@ class DinoVisionTransformer(nn.Module):
             x = rearrange(x, "b s n c -> b (s n) c")
             if pos is not None:
                 pos = rearrange(pos, "b s n c -> b (s n) c")
+
+            # Scene-level scale token: prepend ONLY once per scene (per B)
+            if self.use_scale_token:
+                if scale_token is None:
+                    # chain through global blocks inside this forward
+                    st_last = getattr(self, "_last_scale_token", None)
+                    if st_last is None:
+                        assert self.scale_token is not None
+                        st = self.scale_token.expand(b, -1, -1)
+                    else:
+                        st = st_last.unsqueeze(1)
+                else:
+                    # accept (B, C) or (B, 1, C)
+                    if scale_token.dim() == 2:
+                        st = scale_token.unsqueeze(1)
+                    elif scale_token.dim() == 3:
+                        st = scale_token
+                    else:
+                        raise ValueError(
+                            f"scale_token must be (B,C) or (B,1,C), got {scale_token.shape}"
+                        )
+                    assert st.shape[0] == b and st.shape[1] == 1, "scale_token expects shape (B,1,C)"
+
+                x = torch.cat((st.to(x.dtype), x), dim=1)
+                if pos is not None:
+                    pos0 = torch.zeros(b, 1, pos.shape[-1], device=pos.device, dtype=pos.dtype)
+                    pos = torch.cat((pos0, pos), dim=1)
+                if attn_mask is not None:
+                    # attn_mask: (B, L, L) -> pad to (B, L+1, L+1), allow full interaction with scale token
+                    L = attn_mask.shape[-1]
+                    padded = torch.zeros(
+                        attn_mask.shape[0],
+                        L + 1,
+                        L + 1,
+                        device=attn_mask.device,
+                        dtype=attn_mask.dtype,
+                    )
+                    padded[:, 1:, 1:] = attn_mask
+                    attn_mask = padded
         else:
             raise ValueError(f"Invalid attention type: {attn_type}")
 
@@ -363,6 +453,10 @@ class DinoVisionTransformer(nn.Module):
         if attn_type == "local":
             x = rearrange(x, "(b s) n c -> b s n c", b=b, s=s)
         elif attn_type == "global":
+            if self.use_scale_token:
+                # cache updated scene scale token (B, C) for next global blocks
+                self._last_scale_token = x[:, 0]
+                x = x[:, 1:]
             x = rearrange(x, "b (s n) c -> b s n c", b=b, s=s)
         return x
 
@@ -390,8 +484,14 @@ class DinoVisionTransformer(nn.Module):
         else:
             raise ValueError(f"Invalid output shape: {outputs[0][1].shape}")
         aux_outputs = [self.norm(out) for out in aux_outputs]
-        outputs = [out[..., 1 + self.num_register_tokens :, :] for out in outputs]
-        aux_outputs = [out[..., 1 + self.num_register_tokens :, :] for out in aux_outputs]
+        outputs = [out[..., self.patch_start_idx :, :] for out in outputs]
+        aux_outputs = [out[..., self.patch_start_idx :, :] for out in aux_outputs]
+        if self.use_scale_token:
+            return (
+                tuple(zip(outputs, camera_tokens)),
+                aux_outputs,
+                getattr(self, "_last_scale_token", None),
+            )
         return tuple(zip(outputs, camera_tokens)), aux_outputs
 
     def enable_gradient_checkpointing(self):

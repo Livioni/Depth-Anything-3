@@ -245,7 +245,7 @@ if __name__ == '__main__':
             use_ray_pose = cfg.get("use_ray_pose", False)
             infer_gs = cfg.get("use_gs_infer", False)
             # Normalize camera extrinsics and points
-            new_extrinsics, _, new_world_points, new_depths = normalize_camera_extrinsics_and_points_batch(
+            new_extrinsics, _, new_world_points, new_depths, gt_scale_factor = normalize_camera_extrinsics_and_points_batch(
                 extrinsics=batch['extrinsic'],
                 cam_points=None,
                 world_points=batch['world_points'],
@@ -260,6 +260,7 @@ if __name__ == '__main__':
             batch['extrinsic'] = new_extrinsics
             batch['world_points'] = new_world_points
             batch['depth'] = new_depths
+            batch['gt_scale_factor'] = gt_scale_factor
                         
             # Forward pass with automatic mixed precision
             pose_condition_prob = cfg.get("pose_condition_prob", 0.0)

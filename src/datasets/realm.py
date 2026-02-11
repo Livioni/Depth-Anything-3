@@ -79,36 +79,103 @@ def load_camera_info_from_json(json_path):
     with open(json_path, 'r') as f:
         data = json.load(f)
 
-    # 获取帧数
-    num_frames = data['num_frames']
-    camera_params_per_frame = data['camera_params_per_frame']
+    # 获取帧数（REALM 官方标注里通常在 metadata.num_frames）
+    try:
+        num_frames = int(data.get('metadata', {}).get('num_frames'))
+    except Exception as e:
+        raise ValueError(f"Invalid or missing metadata.num_frames in {json_path}") from e
 
-    # 初始化内参、外参和深度模式数组
-    intrinsics = []
-    extrinsics = []
+    def _extract_K(wrist_cam: dict) -> np.ndarray:
+        intr = wrist_cam.get("intrinsic_matrix", None)
+        if intr is None:
+            raise ValueError(f"Missing wrist_camera.intrinsic_matrix in {json_path}")
+        # 新版格式: {"K": [[...],[...],[...]], ...}
+        if isinstance(intr, dict):
+            if "K" in intr:
+                K = np.array(intr["K"], dtype=np.float32)
+            elif "intrinsic_matrix" in intr:
+                K = np.array(intr["intrinsic_matrix"], dtype=np.float32)
+            else:
+                raise ValueError(f"Unsupported intrinsic_matrix dict keys={list(intr.keys())} in {json_path}")
+        else:
+            # 老版/兼容: 直接给 3x3 列表
+            K = np.array(intr, dtype=np.float32)
+        if K.shape != (3, 3):
+            raise ValueError(f"Expected K shape (3,3), got {K.shape} in {json_path}")
+        return K
+
+    def _extract_Rt(wrist_cam: dict) -> np.ndarray:
+        ext = wrist_cam.get("extrinsic_matrix", None)
+        if ext is None:
+            raise ValueError(f"Missing wrist_camera.extrinsic_matrix in {json_path}")
+        # 新版格式: {"R_t": [[...],[...],[...],[...]], ...}
+        if isinstance(ext, dict):
+            if "R_t" in ext:
+                Rt = np.array(ext["R_t"], dtype=np.float32)
+            elif "T" in ext:
+                Rt = np.array(ext["T"], dtype=np.float32)
+            elif "matrix" in ext:
+                Rt = np.array(ext["matrix"], dtype=np.float32)
+            else:
+                raise ValueError(f"Unsupported extrinsic_matrix dict keys={list(ext.keys())} in {json_path}")
+        else:
+            # 老版/兼容: 直接给 4x4 列表
+            Rt = np.array(ext, dtype=np.float32)
+        if Rt.shape != (4, 4):
+            raise ValueError(f"Expected extrinsic shape (4,4), got {Rt.shape} in {json_path}")
+        return Rt
+
+    # REALM 的 camera_params.json 有两种常见组织方式：
+    # 1) 常量相机参数（官方示例）：data["cameras"] 是一个 dict，包含 "wrist_camera"
+    # 2) 按帧存储：data["cameras"] 是一个 list，每帧一个 dict，帧内包含 "wrist_camera"
+    cameras = data.get("cameras", None)
+    if cameras is None:
+        raise ValueError(f"Missing top-level 'cameras' in {json_path}")
+
+    # 初始化输出
+    intrinsics_list = []
+    extrinsics_list = []
     depth_modes = []
 
-    # 遍历每一帧
-    for frame_idx in range(num_frames):
-        frame_data = camera_params_per_frame[frame_idx]
-        wrist_camera = frame_data['wrist_camera']
-
-        # 读取内参矩阵 [3, 3]
-        intrinsic_matrix = np.array(wrist_camera['intrinsic_matrix'], dtype=np.float32)
-        intrinsics.append(intrinsic_matrix)
-
-        # 读取外参矩阵 [4, 4]
-        extrinsic_matrix = np.array(wrist_camera['extrinsic_matrix'], dtype=np.float32)
-        extrinsics.append(extrinsic_matrix)
-
-        # 读取深度模式（老数据默认 "depth"）
+    if isinstance(cameras, dict):
+        # 常量相机参数：为每一帧复制同一份 K / Rt
+        if "wrist_camera" not in cameras:
+            raise ValueError(f"Missing cameras.wrist_camera in {json_path}")
+        wrist_camera = cameras["wrist_camera"]
+        K = _extract_K(wrist_camera)
+        Rt = _extract_Rt(wrist_camera)
         depth_mode = wrist_camera.get("depth_mode", "depth")
-        depth_modes.append(depth_mode)
+        intrinsics = np.repeat(K[None, ...], num_frames, axis=0).astype(np.float32)
+        extrinsics = np.repeat(Rt[None, ...], num_frames, axis=0).astype(np.float32)
+        depth_modes = [depth_mode] * num_frames
+        return intrinsics, extrinsics, depth_modes
 
-    # 转换为numpy数组
-    intrinsics = np.array(intrinsics, dtype=np.float32)
-    extrinsics = np.array(extrinsics, dtype=np.float32)
+    # 按帧存储：逐帧读取 wrist_camera
+    if not isinstance(cameras, (list, tuple)):
+        raise ValueError(f"Unsupported cameras type={type(cameras)} in {json_path}")
 
+    if len(cameras) < num_frames:
+        raise ValueError(f"cameras length ({len(cameras)}) < num_frames ({num_frames}) in {json_path}")
+
+    for frame_idx in range(num_frames):
+        frame_data = cameras[frame_idx]
+        if not isinstance(frame_data, dict):
+            raise ValueError(f"Frame cameras[{frame_idx}] is not a dict in {json_path}")
+
+        # 兼容两种帧内结构：直接 wrist_camera / 或 frame_data["cameras"]["wrist_camera"]
+        if "wrist_camera" in frame_data:
+            wrist_camera = frame_data["wrist_camera"]
+        elif "cameras" in frame_data and isinstance(frame_data["cameras"], dict) and "wrist_camera" in frame_data["cameras"]:
+            wrist_camera = frame_data["cameras"]["wrist_camera"]
+        else:
+            raise ValueError(f"Missing wrist_camera in cameras[{frame_idx}] in {json_path}")
+
+        intrinsics_list.append(_extract_K(wrist_camera))
+        extrinsics_list.append(_extract_Rt(wrist_camera))
+        depth_modes.append(wrist_camera.get("depth_mode", "depth"))
+
+    intrinsics = np.stack(intrinsics_list, axis=0).astype(np.float32)
+    extrinsics = np.stack(extrinsics_list, axis=0).astype(np.float32)
     return intrinsics, extrinsics, depth_modes
 
 class Realm(BaseStereoViewDataset):
@@ -122,9 +189,6 @@ class Realm(BaseStereoViewDataset):
                  quick=False,
                  verbose=False,
                  specify=False,
-                 load_mask=True,
-                 ray_to_z_focal_scale: float = 0.2,
-                 ray_to_z_pp_offset_xy=(0.0, 0.0),
                  *args,
                  **kwargs
                  ):
@@ -141,8 +205,6 @@ class Realm(BaseStereoViewDataset):
         self.verbose = verbose
         self.use_cache = use_cache
         # 用于“猜测矫正”的可调参数：当深度为 ray depth 时，ray->z 的换算以及后续反投影都会使用该调整后的内参
-        self.ray_to_z_focal_scale = float(ray_to_z_focal_scale)
-        self.ray_to_z_pp_offset_xy = tuple(ray_to_z_pp_offset_xy)
         # Initialize data containers
         self.full_idxs = []
         self.all_rgb_paths = []
@@ -193,9 +255,9 @@ class Realm(BaseStereoViewDataset):
                 annotaions_file_path = os.path.join(seq, 'camera_params.json')
                 num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
-                if num_frames < 24:
-                    print(f"Skipping sequence {seq} with only {num_frames} frames.")
-                    continue
+                # if num_frames < 24:
+                #     print(f"Skipping sequence {seq} with only {num_frames} frames.")
+                #     continue
 
                 new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
                 old_sequence_length = len(self.full_idxs)
@@ -206,10 +268,9 @@ class Realm(BaseStereoViewDataset):
                 N = len(self.full_idxs)
                 
                 
-                intrinsic, extrinsics, depth_modes = load_camera_info_from_json(annotaions_file_path)
-                self.all_intrinsic.extend(intrinsic)
-                self.all_extrinsic.extend(extrinsics)
-                self.all_depth_mode.extend(depth_modes)
+                intrinsic, extrinsics, _ = load_camera_info_from_json(annotaions_file_path)
+                self.all_intrinsic.extend(intrinsic[0])
+                self.all_extrinsic.extend(extrinsics[0])
                 all_extrinsic_numpy = np.array(extrinsics)
                 
                 assert len(self.all_rgb_paths) == N and \
@@ -227,7 +288,6 @@ class Realm(BaseStereoViewDataset):
             joblib.dump(self.rank, f'annotations/realm_annotations/{self.dset}/rankings.joblib')
             joblib.dump(self.all_extrinsic, f'annotations/realm_annotations/{self.dset}/extrinsics.joblib')
             joblib.dump(self.all_intrinsic, f'annotations/realm_annotations/{self.dset}/intrinsics.joblib')
-            joblib.dump(self.all_depth_mode, f'annotations/realm_annotations/{self.dset}/depth_modes.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
     
@@ -260,7 +320,6 @@ class Realm(BaseStereoViewDataset):
             depth_paths = [self.all_depth_paths[i] for i in full_idx]
             camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
             intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
-            depth_mode_list = [self.all_depth_mode[i] for i in full_idx] if len(self.all_depth_mode) == len(self.all_extrinsic) else ["depth"] * len(full_idx)
             
         else:
             full_idx = self.full_idxs[index]
@@ -268,7 +327,6 @@ class Realm(BaseStereoViewDataset):
             depth_paths = [self.all_depth_paths[full_idx]]
             camera_pose_list = [self.all_extrinsic[full_idx]]
             intrinsics_list = [self.all_intrinsic[full_idx]]
-            depth_mode_list = [self.all_depth_mode[full_idx]] if len(self.all_depth_mode) == len(self.all_extrinsic) else ["depth"]
 
         views = []
         for i in range(num):
@@ -276,7 +334,6 @@ class Realm(BaseStereoViewDataset):
             depthpath = depth_paths[i]
             camera_pose = camera_pose_list[i]
             intrinsics = intrinsics_list[i]
-            depth_mode = depth_mode_list[i] if i < len(depth_mode_list) else "depth"
             # load image and depth
             rgb_image = Image.open(impath)
             rgb_image = rgb_image.convert("RGB")
@@ -285,18 +342,7 @@ class Realm(BaseStereoViewDataset):
             # OmniGibson depth conventions:
             # - "depth"        => distance_to_camera (ray depth)
             # - "depth_linear" => distance_to_image_plane (z-depth)
-            if depth_mode in ("depth", "distance_to_camera", "ray"):
-                # 试探性“矫正”：在 ray->z 转换和后续几何反投影中同时使用调整后的内参
-                intrinsics = intrinsics.copy().astype(np.float32)
-                intrinsics[0, 0] *= self.ray_to_z_focal_scale
-                intrinsics[1, 1] *= self.ray_to_z_focal_scale
-                intrinsics[0, 2] += self.ray_to_z_pp_offset_xy[0]
-                intrinsics[1, 2] += self.ray_to_z_pp_offset_xy[1]
-                depthmap = ray_depth_to_z_depth(depthmap, intrinsics, focal_scale=1.0, pp_offset_xy=(0.0, 0.0))
-            elif depth_mode in ("depth_linear", "distance_to_image_plane", "z"):
-                pass
-            else:
-                raise ValueError(f"Unknown depth_mode={depth_mode} for {impath}")
+            depthmap = ray_depth_to_z_depth(depthmap, intrinsics, focal_scale=1.0, pp_offset_xy=(0.0, 0.0))
                         
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)        
@@ -448,14 +494,13 @@ if __name__ == "__main__":
         verbose=True,
         resolution=(512,292), 
         seed = 777,
-        load_mask=False,
         aug_crop=16,
-        z_far = 20000)
+        z_far = 200)
 
-    dataset[(101,0,4)]
+    # dataset[(101,0,4)]
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
-    visualize_scene((50,0,num_views))
+    visualize_scene((0,0,1))
     # print(len(dataset))
 
 

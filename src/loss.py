@@ -50,7 +50,8 @@ class MultitaskLoss(torch.nn.Module):
     - Point loss
     - Tracking loss (not cleaned yet, dirty code is at the bottom of this file)
     """
-    def __init__(self, camera=None, depth=None, point=None, ray=None, seg_mask=None, gaussian=None, **kwargs):
+    def __init__(self, camera=None, depth=None, point=None, ray=None, 
+                 seg_mask=None, gaussian=None, scale=None, **kwargs):
         super().__init__()
         # Loss configuration dictionaries for each task
         self.camera = camera
@@ -59,6 +60,7 @@ class MultitaskLoss(torch.nn.Module):
         self.ray = ray
         self.seg_mask = seg_mask
         self.gaussian = gaussian
+        self.scale = scale
         
         # Initialize LPIPS model if gaussian loss uses LPIPS
         self.lpips_model = None
@@ -105,6 +107,12 @@ class MultitaskLoss(torch.nn.Module):
             total_loss = total_loss + point_loss
             loss_dict.update(point_loss_dict)
             
+        if "gt_scale_factor" in batch and "scale_factor" in predictions and self.scale is not None:
+            scale_loss_dict = compute_scale_loss(predictions, batch, **self.scale)
+            scale_loss = scale_loss_dict["loss_scale"] * self.scale["weight"]
+            total_loss = total_loss + scale_loss
+            loss_dict.update(scale_loss_dict)
+        
         if "feat" in predictions and self.seg_mask is not None:
             seg_mask_loss_dict = embedmask_contrastive_loss(predictions, batch, **self.seg_mask)
             seg_mask_loss = seg_mask_loss_dict["loss_seg_mask"] * self.seg_mask["weight"]
@@ -131,6 +139,49 @@ class MultitaskLoss(torch.nn.Module):
         loss_dict["objective"] = total_loss
 
         return loss_dict
+
+
+def compute_scale_loss(predictions, batch, loss_type: str = "l1", log_space: bool = False, eps: float = 1e-6, **kwargs):
+    """
+    Scale loss between predicted `scale_factor` and GT `gt_scale_factor`.
+
+    Expected:
+      - predictions["scale_factor"]: Tensor shape (B,), (B,1) or (B,*) broadcastable
+      - batch["gt_scale_factor"]:    Tensor shape (B,), (B,1) or (B,*)
+    """
+    pred = predictions["scale_factor"]
+    gt = batch["gt_scale_factor"]
+
+    # Make shapes compatible
+    if pred.dim() > 1 and pred.shape[-1] == 1:
+        pred = pred.squeeze(-1)
+    if gt.dim() > 1 and gt.shape[-1] == 1:
+        gt = gt.squeeze(-1)
+
+    pred = pred.float()
+    gt = gt.float()
+
+    if log_space:
+        # f_log(x) = (x / ||x||) * log(1 + ||x||)
+        # L_scale = || f_log(pred) - f_log(gt) ||_1
+        def f_log(x: torch.Tensor) -> torch.Tensor:
+            if x.dim() == 1:
+                x = x.unsqueeze(-1)  # (B,1) so norm is well-defined on last dim
+            n = torch.linalg.norm(x, dim=-1, keepdim=True).clamp_min(eps)
+            x_unit = x / n
+            return x_unit * torch.log1p(n)
+
+        loss = (f_log(pred) - f_log(gt)).abs().mean()
+    else:
+        loss_type = loss_type.lower()
+        if loss_type == "l1":
+            loss = torch.nn.functional.l1_loss(pred, gt)
+        elif loss_type in {"l2", "mse"}:
+            loss = torch.nn.functional.mse_loss(pred, gt)
+        else:
+            raise ValueError(f"Unsupported scale loss_type: {loss_type}")
+
+    return {"loss_scale": loss}
 
 def embedmask_contrastive_loss(predictions, batch, delta_pull=0.25, 
                                delta_push=1.0, min_mask_pixels=50, **kwargs):

@@ -348,6 +348,7 @@ def load_model(cfg: Any, device: torch.device):
         if k.startswith('model.'):
             state_dict[k[6:]] = state_dict.pop(k)
     model.load_state_dict(state_dict, strict=False)
+    logger.info(f"Model loaded successfully from {cfg.get('model_checkpoint_path')}")
     
     # Apply LoRA if configured (before gradient checkpointing)
     if cfg.get("use_lora", False):
@@ -369,9 +370,18 @@ def load_model(cfg: Any, device: torch.device):
             else:
                 model.head.requires_grad_(False)
                 frozen_modules.append('head')
+
+        # Scale Head
+        if getattr(model, "scale_head", None) is not None:
+            if not cfg.get("scale_head_freeze", False):
+                model.scale_head.requires_grad_(True)
+                trainable_modules.append("scale_head")
+            else:
+                model.scale_head.requires_grad_(False)
+                frozen_modules.append("scale_head")
         
         # Camera Decoder
-        if hasattr(model, 'cam_dec'):
+        if getattr(model, 'cam_dec', None) is not None:
             if not cfg.get("cam_dec_freeze", False):
                 model.cam_dec.requires_grad_(True)
                 trainable_modules.append('cam_dec')
@@ -417,20 +427,54 @@ def load_model(cfg: Any, device: torch.device):
         
         # For NestedDepthAnything3Net
         if hasattr(model, 'da3'):
-            if hasattr(model.da3, 'head') and not cfg.get("head_freeze", False):
-                model.da3.head.requires_grad_(True)
-                trainable_modules.append('da3.head')
-            if hasattr(model.da3, 'cam_dec') and not cfg.get("cam_dec_freeze", False):
-                model.da3.cam_dec.requires_grad_(True)
-                trainable_modules.append('da3.cam_dec')
-            if hasattr(model.da3, 'cam_enc') and not cfg.get("cam_enc_freeze", False):
-                model.da3.cam_enc.requires_grad_(True)
-                trainable_modules.append('da3.cam_enc')
+            if getattr(model.da3, 'head', None) is not None:
+                if not cfg.get("head_freeze", False):
+                    model.da3.head.requires_grad_(True)
+                    trainable_modules.append('da3.head')
+                else:
+                    model.da3.head.requires_grad_(False)
+                    frozen_modules.append('da3.head')
+
+            if getattr(model.da3, "scale_head", None) is not None:
+                if not cfg.get("scale_head_freeze", False):
+                    model.da3.scale_head.requires_grad_(True)
+                    trainable_modules.append("da3.scale_head")
+                else:
+                    model.da3.scale_head.requires_grad_(False)
+                    frozen_modules.append("da3.scale_head")
+
+            if getattr(model.da3, 'cam_dec', None) is not None:
+                if not cfg.get("cam_dec_freeze", False):
+                    model.da3.cam_dec.requires_grad_(True)
+                    trainable_modules.append('da3.cam_dec')
+                else:
+                    model.da3.cam_dec.requires_grad_(False)
+                    frozen_modules.append('da3.cam_dec')
+
+            if getattr(model.da3, 'cam_enc', None) is not None:
+                if not cfg.get("cam_enc_freeze", False):
+                    model.da3.cam_enc.requires_grad_(True)
+                    trainable_modules.append('da3.cam_enc')
+                else:
+                    model.da3.cam_enc.requires_grad_(False)
+                    frozen_modules.append('da3.cam_enc')
         
         if hasattr(model, 'da3_metric'):
-            if hasattr(model.da3_metric, 'head') and not cfg.get("head_freeze", False):
-                model.da3_metric.head.requires_grad_(True)
-                trainable_modules.append('da3_metric.head')
+            if getattr(model.da3_metric, 'head', None) is not None:
+                if not cfg.get("head_freeze", False):
+                    model.da3_metric.head.requires_grad_(True)
+                    trainable_modules.append('da3_metric.head')
+                else:
+                    model.da3_metric.head.requires_grad_(False)
+                    frozen_modules.append('da3_metric.head')
+
+            if getattr(model.da3_metric, "scale_head", None) is not None:
+                if not cfg.get("scale_head_freeze", False):
+                    model.da3_metric.scale_head.requires_grad_(True)
+                    trainable_modules.append("da3_metric.scale_head")
+                else:
+                    model.da3_metric.scale_head.requires_grad_(False)
+                    frozen_modules.append("da3_metric.scale_head")
         
         if trainable_modules:
             logger.info(f"✓ Trainable modules: {trainable_modules}")
@@ -491,6 +535,16 @@ def load_model(cfg: Any, device: torch.device):
             head_params = sum(p.numel() for p in model.head.parameters())
             head_trainable = sum(p.numel() for p in model.head.parameters() if p.requires_grad)
             logger.info(f"  Head: {head_trainable:,} / {head_params:,} trainable")
+
+        # Scale head parameters
+        if getattr(model, "scale_head", None) is not None:
+            scale_head_params = sum(p.numel() for p in model.scale_head.parameters())
+            scale_head_trainable = sum(
+                p.numel() for p in model.scale_head.parameters() if p.requires_grad
+            )
+            logger.info(
+                f"  Scale Head: {scale_head_trainable:,} / {scale_head_params:,} trainable"
+            )
         
         # Camera decoder parameters
         if hasattr(model, 'cam_dec'):
@@ -575,17 +629,34 @@ def build_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
             # Try to separate different modules
             head_params = []
             cam_dec_params = []
+            cam_enc_params = []
+            scale_head_params = []
             other_module_params = []
             
             for name, param in model.named_parameters():
                 if param.requires_grad and 'lora' not in name.lower() and 'backbone' not in name:
-                    if 'head' in name:
+                    if 'scale_head' in name:
+                        if cfg.get("scale_head_freeze", False):
+                            param.requires_grad = False
+                        else:
+                            scale_head_params.append(param)
+                    elif 'head' in name:
                         head_params.append(param)
+                    elif 'cam_enc' in name:
+                        cam_enc_params.append(param)
                     elif 'cam_dec' in name:
                         cam_dec_params.append(param)
                     else:
                         other_module_params.append(param)
             
+            if scale_head_params:
+                param_groups.append({
+                    "params": scale_head_params,
+                    "lr": cfg.get("lr_scale_head", cfg.get("lr_head", cfg.get("lr", 2e-5))),
+                    "name": "scale_head"
+                })
+                logger.info(f"Scale head group: {len(scale_head_params)} parameter tensors")
+
             if head_params:
                 param_groups.append({
                     "params": head_params,
@@ -594,6 +665,14 @@ def build_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                 })
                 logger.info(f"Head group: {len(head_params)} parameter tensors")
             
+            if cam_enc_params:
+                param_groups.append({
+                    "params": cam_enc_params,
+                    "lr": cfg.get("lr_cam_enc", cfg.get("lr", 2e-5)),
+                    "name": "cam_enc"
+                })
+                logger.info(f"Camera encoder group: {len(cam_enc_params)} parameter tensors")
+
             if cam_dec_params:
                 param_groups.append({
                     "params": cam_dec_params,
@@ -635,28 +714,42 @@ def build_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                 "lr": cfg.get("lr_head"),
                 "name": "head"
             })
-            
-        if cfg.get("cam_enc_freeze", False):
-            for param in model.cam_enc.parameters():
-                param.requires_grad = False
-            logger.info("Camera encoder parameters are frozen.")
-        else:
-            param_groups.append({
-                "params": model.cam_enc.parameters(),
-                "lr": cfg.get("lr_cam_enc"),
-                "name": "cam_enc"
-            })
+
+        if getattr(model, "scale_head", None) is not None:
+            if cfg.get("scale_head_freeze", False):
+                for param in model.scale_head.parameters():
+                    param.requires_grad = False
+                logger.info("Scale head parameters are frozen.")
+            else:
+                param_groups.append({
+                    "params": model.scale_head.parameters(),
+                    "lr": cfg.get("lr_scale_head", cfg.get("lr_head")),
+                    "name": "scale_head"
+                })
         
-        if cfg.get("cam_dec_freeze", False):
-            for param in model.cam_dec.parameters():
-                param.requires_grad = False
-            logger.info("Camera decoder parameters are frozen.")
-        else:
-            param_groups.append({
-                "params": model.cam_dec.parameters(),
-                "lr": cfg.get("lr_cam_dec"),
-                "name": "cam_dec"
-            })
+        if getattr(model, "cam_enc", None) is not None:
+            if cfg.get("cam_enc_freeze", False):
+                for param in model.cam_enc.parameters():
+                    param.requires_grad = False
+                logger.info("Camera encoder parameters are frozen.")
+            else:
+                param_groups.append({
+                    "params": model.cam_enc.parameters(),
+                    "lr": cfg.get("lr_cam_enc"),
+                    "name": "cam_enc"
+                })
+        
+        if getattr(model, "cam_dec", None) is not None:
+            if cfg.get("cam_dec_freeze", False):
+                for param in model.cam_dec.parameters():
+                    param.requires_grad = False
+                logger.info("Camera decoder parameters are frozen.")
+            else:
+                param_groups.append({
+                    "params": model.cam_dec.parameters(),
+                    "lr": cfg.get("lr_cam_dec"),
+                    "name": "cam_dec"
+                })
             
         if model.gs_head:
             if cfg.get("gs_head_freeze", False):
@@ -670,7 +763,7 @@ def build_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
                     "name": "gs_head"
                 })
                 
-        exclude_keys = ["backbone", "head", "cam_enc", "cam_dec", "gs_head"]
+        exclude_keys = ["backbone", "head", "scale_head", "cam_enc", "cam_dec", "gs_head"]
         
         param_groups.append({
             "params": [
@@ -727,6 +820,14 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
     else:
         depth=None
         
+    if not cfg.get("scale_head_freeze", True):
+        scale={
+            "weight": cfg.get("scale_loss_weight", 1.0),
+            "log_space": cfg.get("scale_loss_log_space", True),
+        }
+    else:
+        scale=None
+        
     if cfg.get("use_ray_pose", True):
         ray={
             "weight": cfg.get("ray_loss_weight", 1.0),
@@ -768,7 +869,8 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         ray=ray,
         point=point,
         seg_mask=seg_mask,
-        gaussian=gaussian
+        gaussian=gaussian,
+        scale=scale
     )
     
     logger.info("Loss criterion initialized:")
@@ -776,6 +878,7 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
     logger.info(f"  Depth loss weight: {cfg.get('depth_loss_weight', 1.0)}")
     logger.info(f"  Ray loss weight: {cfg.get('ray_loss_weight', 1.0)}")
     logger.info(f"  Gaussian loss weight: {cfg.get('gaussian_loss_weight', 1.0)}")
+    logger.info(f"  Scale loss weight: {cfg.get('scale_loss_weight', 1.0)}")
     
     return criterion
 

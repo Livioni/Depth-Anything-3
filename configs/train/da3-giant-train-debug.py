@@ -17,13 +17,14 @@ checkpointing_steps = 5000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-giant.yaml"
+model_config = "src/depth_anything_3/configs/da3-giant-metric.yaml"
 model_checkpoint_path = "checkpoints/da3-giant-1.1/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
+scale_head_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = True
 use_gs_infer = False
@@ -90,6 +91,10 @@ depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
 depth_valid_range = 0.98
 
+#scale loss
+scale_loss_weight = 1.0
+log_space = True
+
 # Gaussian loss (only active when gs_head_freeze = False)
 gaussian_loss_weight = 1.0
 gaussian_use_conf = False      # Use confidence mask from depth
@@ -118,6 +123,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Colosseum(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"2000 @ RLBench(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 
