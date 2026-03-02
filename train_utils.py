@@ -793,7 +793,7 @@ def build_optimizer(model: torch.nn.Module, cfg: Any) -> torch.optim.Optimizer:
     return optimizer
 
 
-def build_loss_criterion(cfg: Any) -> MultitaskLoss:
+def build_loss_criterion(model: torch.nn.Module, cfg: Any) -> MultitaskLoss:
     """
     Build multi-task loss criterion.
     
@@ -803,11 +803,14 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
     Returns:
         MultitaskLoss instance
     """
-    if not cfg.get("cam_dec_freeze", True):
-        camera={
-            "weight": cfg.get("camera_loss_weight", 5.0),
-            "loss_type": cfg.get("camera_loss_type", "l1")
-        }
+    if getattr(model, "cam_dec", None) is not None:
+        if not cfg.get("cam_dec_freeze", True):
+            camera={
+                "weight": cfg.get("camera_loss_weight", 5.0),
+                "loss_type": cfg.get("camera_loss_type", "l1")
+            }
+        else:
+            camera=None
     else:
         camera=None
         
@@ -819,12 +822,15 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         }
     else:
         depth=None
-        
-    if not cfg.get("scale_head_freeze", True):
-        scale={
-            "weight": cfg.get("scale_loss_weight", 1.0),
-            "log_space": cfg.get("scale_loss_log_space", True),
-        }
+
+    if getattr(model, "scale_head", None) is not None:
+        if not cfg.get("scale_head_freeze", True):
+            scale={
+                "weight": cfg.get("scale_loss_weight", 1.0),
+                "log_space": cfg.get("scale_loss_log_space", True),
+            }
+        else:
+            scale=None
     else:
         scale=None
         
@@ -841,25 +847,31 @@ def build_loss_criterion(cfg: Any) -> MultitaskLoss:
         ray=None
         point=None
         
-    if not cfg.get("seg_head_freeze", True):
-        seg_mask={
-            "weight": cfg.get("seg_mask_loss_weight", 1.0),
-            "delta_pull": cfg.get("seg_mask_delta_pull", 0.25),
-            "delta_push": cfg.get("seg_mask_delta_push", 1.0),
-            "min_mask_pixels": cfg.get("seg_mask_min_mask_pixels", 50)
-        }
+    if getattr(model, "seg_head", None) is not None:
+        if not cfg.get("seg_head_freeze", True):
+            seg_mask={
+                "weight": cfg.get("seg_mask_loss_weight", 1.0),
+                "delta_pull": cfg.get("seg_mask_delta_pull", 0.25),
+                "delta_push": cfg.get("seg_mask_delta_push", 1.0),
+                "min_mask_pixels": cfg.get("seg_mask_min_mask_pixels", 50)
+            }
+        else:
+            seg_mask=None
     else:
         seg_mask=None
         
-    if not cfg.get("gs_head_freeze", True):
-        gaussian={
-            "weight": cfg.get("gaussian_loss_weight", 1.0),
-            "use_conf": cfg.get("gaussian_use_conf", False),
-            "use_mask": cfg.get("gaussian_use_mask", True),
-            "use_alpha": cfg.get("gaussian_use_alpha", False),
-            "use_lpips": cfg.get("gaussian_use_lpips", False),
-            "lpips_weight": cfg.get("gaussian_lpips_weight", 1.0),
-        }
+    if getattr(model, "gs_head", None) is not None:
+        if not cfg.get("gs_head_freeze", True):
+            gaussian={
+                "weight": cfg.get("gaussian_loss_weight", 1.0),
+                "use_conf": cfg.get("gaussian_use_conf", False),
+                "use_mask": cfg.get("gaussian_use_mask", True),
+                "use_alpha": cfg.get("gaussian_use_alpha", False),
+                "use_lpips": cfg.get("gaussian_use_lpips", False),
+                "lpips_weight": cfg.get("gaussian_lpips_weight", 1.0),
+            }
+        else:
+            gaussian=None
     else:
         gaussian=None
         

@@ -20,14 +20,14 @@ print("missing:", len(missing), "unexpected:", len(unexpected))
 
 api = api.to("cuda").eval()
 
-# model = create_object(load_config("src/depth_anything_3/configs/da3-giant.yaml"))
-# # Load pretrained weights
-# state_dict = load_file("outputs/DA3-Giant-test/checkpoint-0-5000/model.safetensors")
-# for k in list(state_dict.keys()):
-#     if k.startswith('model.'):
-#         state_dict[k[6:]] = state_dict.pop(k)
-# model.load_state_dict(state_dict, strict=False)
-# model = model.to(device=device)
+model = create_object(load_config("src/depth_anything_3/configs/da3-giant.yaml"))
+# Load pretrained weights
+state_dict = load_file("outputs/DA3-Giant-test/checkpoint-0-5000/model.safetensors")
+for k in list(state_dict.keys()):
+    if k.startswith('model.'):
+        state_dict[k[6:]] = state_dict.pop(k)
+model.load_state_dict(state_dict, strict=False)
+model = model.to(device=device)
     
 example_path = "datasets/test/1"
 images = sorted(glob.glob(os.path.join(example_path, "*.png")))

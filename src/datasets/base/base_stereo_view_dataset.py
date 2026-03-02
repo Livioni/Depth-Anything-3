@@ -9,7 +9,7 @@ import numpy as np
 import torch
 
 from src.datasets.base.easy_dataset import EasyDataset
-from src.datasets.utils.transforms import ImgNorm
+from src.datasets.utils.transforms import ImgNorm, ColorJitter
 from src.utils.geometry import depthmap_to_absolute_camera_coordinates
 import src.datasets.utils.cropping as cropping
 

@@ -110,7 +110,7 @@ if __name__ == '__main__':
     optimizer = build_optimizer(model, cfg)
     
     # Build loss criterion
-    train_criterion = build_loss_criterion(cfg)
+    train_criterion = build_loss_criterion(model, cfg)
     
     # ======================================================
     # 4. Prepare for Distributed Training
@@ -349,15 +349,17 @@ if __name__ == '__main__':
                     logger.info(f"Generating visualization at step {global_step}...")
                     save_pts_dir = os.path.join(save_dir, f'epoch-{epoch}')
                     Path(save_pts_dir).mkdir(parents=True, exist_ok=True)
-                    
+
                     try:
                         with torch.no_grad():
+                            # Process predictions for visualization
                             predictions_0 = select_first_batch(predictions)
                             get_world_points_from_depth(predictions_0)
                             denormalized_images = denormalize_image(predictions_0["images"])
                             predictions_0["images"] = denormalized_images
+
                             # Convert predictions to GLB format
-                            glbscene = predictions_to_glb(
+                            glbscene_pred = predictions_to_glb(
                                 predictions_0,
                                 conf_thres=cfg.get("vis_conf_threshold", 0.2),
                                 filter_by_frames=cfg.get("vis_filter_by_frames", "All"),
@@ -368,17 +370,54 @@ if __name__ == '__main__':
                                 target_dir=save_pts_dir,
                                 prediction_mode=cfg.get("vis_prediction_mode", "Predicted Depth"),
                             )
-                            
-                            glb_path = os.path.join(save_pts_dir, f'glbscene_{global_step}.glb')
-                            glbscene.export(file_obj=glb_path)
-                            logger.info(f"Visualization saved to {glb_path}")
-                            
+
+                            glb_path_pred = os.path.join(save_pts_dir, f'glbscene_pred_{global_step}.glb')
+                            glbscene_pred.export(file_obj=glb_path_pred)
+                            logger.info(f"Prediction visualization saved to {glb_path_pred}")
+
+                            # Process ground truth for visualization
+                            gt_data = select_first_batch({
+                                "depth": batch["depth"],
+                                "images": batch["images"],
+                                "extrinsics": batch["extrinsic"],
+                                "intrinsics": batch["intrinsic"],
+                                "valid_mask": batch.get("valid_mask", None),
+                                "world_points": batch.get("world_points", None)
+                            })
+
+                            # Use ground truth depth to generate world points
+                            get_world_points_from_depth(gt_data)
+
+                            # Denormalize images for GT
+                            denormalized_images_gt = denormalize_image(gt_data["images"])
+                            gt_data["images"] = denormalized_images_gt
+
+                            # Convert ground truth to GLB format
+                            glbscene_gt = predictions_to_glb(
+                                gt_data,
+                                conf_thres=cfg.get("vis_conf_threshold", 0.2),
+                                filter_by_frames=cfg.get("vis_filter_by_frames", "All"),
+                                mask_black_bg=cfg.get("vis_mask_black_bg", False),
+                                mask_white_bg=cfg.get("vis_mask_white_bg", False),
+                                show_cam=cfg.get("vis_show_cam", True),
+                                mask_sky=cfg.get("vis_mask_sky", False),
+                                target_dir=save_pts_dir,
+                                prediction_mode="Ground Truth Depth",
+                            )
+
+                            glb_path_gt = os.path.join(save_pts_dir, f'glbscene_gt_{global_step}.glb')
+                            glbscene_gt.export(file_obj=glb_path_gt)
+                            logger.info(f"Ground truth visualization saved to {glb_path_gt}")
+
                             # Log to WandB if enabled
                             if cfg.get("wandb", False):
-                                wandb.log({"visualization": wandb.Object3D(glb_path)}, step=global_step)
-                            
+                                wandb.log({
+                                    "visualization_pred": wandb.Object3D(glb_path_pred),
+                                    "visualization_gt": wandb.Object3D(glb_path_gt)
+                                }, step=global_step)
+
                             # Clean up
-                            del glbscene, predictions_0
+                            del glbscene_pred, glbscene_gt, predictions_0, gt_data
                             gc.collect()
                     except Exception as e:
                         logger.warning(f"Failed to generate visualization: {e}")

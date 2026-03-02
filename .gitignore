@@ -5,6 +5,7 @@ annotations/
 checkpoints/
 visualizations/
 /datasets
+/eval_output
 
 # Distribution / packaging
 workspace/

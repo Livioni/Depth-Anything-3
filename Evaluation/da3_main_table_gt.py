@@ -98,19 +98,19 @@ def main(args: argparse.Namespace) -> None:
 
     # ============== 设备 ==============
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    has_cuda = device.type == "cuda"
+    # has_cuda = device.type == "cuda"
 
 
-    model = create_object(load_config(cfg.get("model_config", "src/depth_anything_3/configs/da3-giant.yaml")))
-    # Load pretrained weights
-    state_dict = load_file(cfg.get("model_checkpoint_path","checkpoints/da3-giant/model.safetensors"))
-    for k in list(state_dict.keys()):
-        if k.startswith('model.'):
-            state_dict[k[6:]] = state_dict.pop(k)
-    model.load_state_dict(state_dict, strict=False)
-    print(f"Model loaded from {cfg.get('model_checkpoint_path')} successfully.")
-    model.to(device)
-    model.eval()
+    # model = create_object(load_config(cfg.get("model_config", "src/depth_anything_3/configs/da3-giant.yaml")))
+    # # Load pretrained weights
+    # state_dict = load_file(cfg.get("model_checkpoint_path","checkpoints/da3-giant/model.safetensors"))
+    # for k in list(state_dict.keys()):
+    #     if k.startswith('model.'):
+    #         state_dict[k[6:]] = state_dict.pop(k)
+    # model.load_state_dict(state_dict, strict=False)
+    # print(f"Model loaded from {cfg.get('model_checkpoint_path')} successfully.")
+    # model.to(device)
+    # model.eval()
 
     # ============== 测试集 ==============
     logger.info(f"Building test dataset: {eval_dataset}")
@@ -138,7 +138,6 @@ def main(args: argparse.Namespace) -> None:
     Tacc_3_Pools: list[float] = []
     rError: list[float] = []
     tError: list[float] = []
-    scale_errors: list[float] = []
 
     pbar = tqdm(range(args.test_iteration), desc="Evaluating", dynamic_ncols=True)
     for index in pbar:
@@ -190,21 +189,33 @@ def main(args: argparse.Namespace) -> None:
         infer_gs = args.infer_gs if args.infer_gs is not None else bool(cfg.get("use_gs_infer", False))
 
         # 前向（与训练一致的调用签名）
-        if args.use_pose_condition or cfg.get("use_pose_condition", False):
-            predictions = model(
-                x=batch["images"],
-                extrinsics=extra_input_extrinsic_gt.to(device, non_blocking=True),
-                intrinsics=batch["intrinsic"],
-                infer_gs=infer_gs,
-                use_ray_pose=use_ray_pose,
-            )
-        else:
-            predictions = model(
-                x=batch["images"],
-                infer_gs=infer_gs,
-                use_ray_pose=use_ray_pose,
-            )
+        # if args.use_pose_condition:
+        #     predictions = model(
+        #         x=batch["images"],
+        #         extrinsics=extra_input_extrinsic_gt.to(device, non_blocking=True),
+        #         intrinsics=batch["intrinsic"],
+        #         infer_gs=infer_gs,
+        #         use_ray_pose=use_ray_pose,
+        #     )
+        # else:
+        #     predictions = model(
+        #         x=batch["images"],
+        #         infer_gs=infer_gs,
+        #         use_ray_pose=use_ray_pose,
+        #     )
 
+        depth_conf = torch.ones_like(batch["depth"])
+        predictions = {
+            "depth": batch["depth"],
+            "depth_conf": depth_conf,
+            "extrinsics": batch["extrinsic"],
+            "intrinsics": batch["intrinsic"],
+            "images": batch["images"],
+            "ray": batch["ray_map"],
+            "world_points": batch["world_points"],
+            "valid_mask": batch["valid_mask"],
+        }
+        
         # ===== Save Visualizations =====
         if args.save_visual_every > 0 and (index % args.save_visual_every == 0):
             prediction_mode = cfg.get("vis_prediction_mode", "Predicted Depth")
@@ -254,14 +265,6 @@ def main(args: argparse.Namespace) -> None:
         depth_results, _, _, _ = depth_evaluation(predictions["depth"], batch["depth"])
         gathered_depth_metrics.append(depth_results)
 
-        # ===== Scale 评测 =====
-        if "scale_factor" in predictions:
-            pred_scale = predictions["scale_factor"].detach().cpu().item() if torch.is_tensor(predictions["scale_factor"]) else predictions["scale_factor"]
-            gt_scale = gt_scale_factor.item() if torch.is_tensor(gt_scale_factor) else gt_scale_factor
-            scale_error = abs(pred_scale - gt_scale)
-            scale_errors.append(scale_error)
-
-        
         # ===== 相机评测（DA3 输出 extrinsics 时）=====
         iter_camera = None
         if "extrinsics" in predictions:
@@ -302,17 +305,12 @@ def main(args: argparse.Namespace) -> None:
                 for k, v in depth_results.items()
             }
             record = {"index": int(index), "depth": depth_record, "camera": iter_camera}
-            if "scale_factor" in predictions:
-                record["scale_error"] = float(scale_error)
             with open(per_iter_log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception as e:
             logger.warning(f"[Log] Failed to write per-iter metrics at index {index}: {e}")
 
         del batch, predictions, depth_results
-        gc.collect()
-        if has_cuda and (index % 10 == 0):
-            torch.cuda.empty_cache()
 
     # ============== 聚合与保存 ==============
     if len(gathered_depth_metrics) == 0:
@@ -360,17 +358,6 @@ def main(args: argparse.Namespace) -> None:
         with open(camera_log_path, "w") as f:
             f.write(json.dumps(camera_metrics, indent=2))
         print(f"[Eval] Camera metrics saved to: {camera_log_path}")
-
-    if len(scale_errors) > 0:
-        scale_metrics = {
-            "scale_error_mean": float(np.mean(scale_errors)),
-            "scale_error_std": float(np.std(scale_errors)),
-            "num_samples": len(scale_errors)
-        }
-        scale_log_path = os.path.join(logging_dir, "Evaluation_Scale.json")
-        with open(scale_log_path, "w") as f:
-            f.write(json.dumps(scale_metrics, indent=2))
-        print(f"[Eval] Scale metrics saved to: {scale_log_path}")
 
     print(f"[Eval] Per-iteration metrics saved to: {per_iter_log_path}")
     print("[Eval] Done!")

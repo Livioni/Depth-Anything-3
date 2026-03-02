@@ -1,10 +1,10 @@
 # ======================================================
-# OmniVGGT Training Configuration
+# DA3 Training Configuration
 # ======================================================
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Giant-adt-col-hoi-rlb-rob"
+exp_name = "DA3-Giant-adt-col-hoi-rlb-rob-v2"
 logging_dir = "logs"
 
 # == Logging Configuration ==
@@ -12,7 +12,7 @@ wandb = True
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 500
+num_save_visual = 1000
 checkpointing_steps = 5000
 save_each_epoch = False
 
@@ -23,7 +23,7 @@ model_requires_grad = True
 backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
-cam_dec_freeze = False
+cam_dec_freeze = True
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = True
 use_gs_infer = False
@@ -80,8 +80,8 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 
 # == Loss Configuration ==
 # Camera loss
-camera_loss_weight = 0.5 # mainly use ray loss
-camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
+# camera_loss_weight = 0.5 # mainly use ray loss
+# camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
 # Ray Loss
 ray_loss_weight = 1.0
@@ -111,7 +111,7 @@ vis_mask_black_bg = False
 vis_mask_white_bg = False
 vis_show_cam = True
 vis_mask_sky = False
-vis_prediction_mode = "Predicted Depth"
+vis_prediction_mode = "Ray+Depth"
 
 # == Resume Configuration ==
 resume_model_path = None

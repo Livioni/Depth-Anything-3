@@ -90,7 +90,7 @@ class Droid(BaseStereoViewDataset):
         self.sequences = sorted(glob.glob(os.path.join(dataset_location, dset, "*/")))
 
         if quick:
-           self.sequences = self.sequences[:1]
+           self.sequences = self.sequences[9000:]
 
         if self.verbose:
             print(self.sequences)
@@ -379,4 +379,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((200,0,num_views))
+    # visualize_scene((200,0,num_views))

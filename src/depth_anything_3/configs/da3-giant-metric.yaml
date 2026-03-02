@@ -52,14 +52,13 @@ cam_enc:
 
   dim_out: 1536
 
-cam_dec:
-  __object__:
-    path: depth_anything_3.model.cam_dec
-    name: CameraDec
-    args: as_params
+# cam_dec:
+#   __object__:
+#     path: depth_anything_3.model.cam_dec
+#     name: CameraDec
+#     args: as_params
 
-  dim_in: 3072
-
+#   dim_in: 3072
 
 # gs_head:
 #   __object__:

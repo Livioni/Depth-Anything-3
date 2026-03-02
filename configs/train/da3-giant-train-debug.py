@@ -12,7 +12,7 @@ wandb = False
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 500
+num_save_visual = 50
 checkpointing_steps = 5000
 save_each_epoch = False
 
@@ -23,7 +23,7 @@ model_requires_grad = True
 backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
-cam_dec_freeze = False
+cam_dec_freeze = True
 scale_head_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = True
@@ -79,8 +79,8 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 
 # == Loss Configuration ==
 # Camera loss
-camera_loss_weight = 0.5 # mainly use ray loss
-camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
+# camera_loss_weight = 0.5 # mainly use ray loss
+# camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
 # Ray Loss
 ray_loss_weight = 1.0
@@ -110,7 +110,7 @@ vis_mask_black_bg = False
 vis_mask_white_bg = False
 vis_show_cam = True
 vis_mask_sky = False
-vis_prediction_mode = "Predicted Depth"
+vis_prediction_mode = "Ray+Depth"
 
 # == Resume Configuration ==
 resume_model_path = None
@@ -123,6 +123,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"2000 @ RLBench(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"2000 @ RLBench(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 
