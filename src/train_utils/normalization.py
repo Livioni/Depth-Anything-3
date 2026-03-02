@@ -61,6 +61,14 @@ def normalize_camera_extrinsics_and_points_batch(
     check_valid_tensor(world_points, "world_points")
     check_valid_tensor(depths, "depths")
 
+    # Ensure dtype consistency - convert all tensors to float32 to avoid Float/Double mismatch
+    extrinsics = extrinsics.float()
+    if cam_points is not None:
+        cam_points = cam_points.float()
+    if world_points is not None:
+        world_points = world_points.float()
+    if depths is not None:
+        depths = depths.float()
 
     B, S, _, _ = extrinsics.shape
     device = extrinsics.device
@@ -100,6 +108,10 @@ def normalize_camera_extrinsics_and_points_batch(
         # instead of using the inverse of the first camera's extrinsic matrix
         R = extrinsics[:, 0, :3, :3]
         t = extrinsics[:, 0, :3, 3]
+        # Ensure dtype consistency to avoid Float/Double mismatch
+        world_points = world_points.float()
+        R = R.float()
+        t = t.float()
         new_world_points = (world_points @ R.transpose(-1, -2).unsqueeze(1).unsqueeze(2)) + t.unsqueeze(1).unsqueeze(2).unsqueeze(3)
     else:
         new_world_points = None

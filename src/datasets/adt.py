@@ -58,7 +58,7 @@ def load_depth_png_to_meters(depth_png_path: str | Path) -> np.ndarray:
 
 class ADT(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='datasets/ADT',
+                 dataset_location='/mnt/lihao/phs_datasets/adt_processed',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -105,7 +105,7 @@ class ADT(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/adt_annotations'
+            dataset_location = '/mnt/lihao/phs_datasets/annotations/adt_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -173,13 +173,13 @@ class ADT(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/adt_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/adt_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/adt_annotations/{dset}/depth_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/adt_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/adt_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/adt_annotations/{dset}/rankings.joblib')
-            joblib.dump(self.all_seg_mask, f'annotations/adt_annotations/{dset}/seg_mask.joblib')
+            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/depth_paths.json')
+            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/rankings.joblib')
+            # joblib.dump(self.all_seg_mask, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -312,7 +312,7 @@ class ADT(BaseStereoViewDataset):
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
             'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
-            'world_coords_points': ('world_points', np.stack),
+            'world_coords_points': ('world_points', lambda x: np.stack([p.astype(np.float32) for p in x])),
             'true_shape': ('true_shape', np.array),
             'point_mask': ('valid_mask', np.stack),
             'label': ('label', lambda x: x),  # Keep as list
@@ -335,7 +335,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/adt'  # Change this to the correct path
+    dataset_location = '/mnt/lihao/phs_datasets/adt_processed'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -384,4 +384,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((10,0,num_views))
+    # visualize_scene((10,0,num_views))

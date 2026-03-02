@@ -1,3 +1,8 @@
+# ======================================================
+# Depth Anything 3 Training Script
+# ======================================================
+# accelerate launch --num_processes=8 train_da3.py --config configs/train/da3-giant-train.py
+
 import os
 import gc
 from pathlib import Path

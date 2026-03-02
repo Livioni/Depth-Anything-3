@@ -54,7 +54,7 @@ def load_subject_masks(scene_dir: Path, split_idx: int):
 
 class RoboTwin(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='datasets/robotwin',
+                 dataset_location='/mnt/lihao/phs_datasets/robotwin',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -101,7 +101,7 @@ class RoboTwin(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/robotwin_annotations'
+            dataset_location = '/mnt/lihao/phs_datasets/annotations/robotwin_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -123,60 +123,71 @@ class RoboTwin(BaseStereoViewDataset):
                     print('seq', seq)
                     
                 sub_scenes = os.listdir(seq)
-                for sub_seq in sub_scenes:
+                
+                for sub_seq in sub_scenes:        
                     
-                    rgb_path = os.path.join(seq, sub_seq, 'images')
-                    depth_path = os.path.join(seq, sub_seq, 'depths')
-                    # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
-                    extrinsic_path = os.path.join(seq, sub_seq, 'extrinsics')
-                    intrinsic_path = os.path.join(seq, sub_seq, 'intrinsics')
-                    num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
-                    
-                    if num_frames < 24:
-                        print(f"Skipping sequence {seq} with only {num_frames} frames.")
-                        continue
-                    
-                    new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
-                    old_sequence_length = len(self.full_idxs)
-                    self.full_idxs.extend(new_sequence)
-                    
-                    all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')))
-                    all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')))
-                    all_extrinsic_paths = sorted(glob.glob(os.path.join(extrinsic_path, '*.npy')))
-                    all_intrinsic_paths = sorted(glob.glob(os.path.join(intrinsic_path, '*.npy')))
-                    self.all_rgb_paths.extend(all_rgb_paths)
-                    self.all_depth_paths.extend(all_depth_paths)
-                    
-                    N = len(self.full_idxs)
+                    sub_sub_scenes = os.listdir(os.path.join(seq, sub_seq))
+                    if quick:
+                        sub_sub_scenes = sub_sub_scenes[:1]
+                        
+                    for sub_sub_seq in sub_sub_scenes:
+                        
+                        rgb_path = os.path.join(seq, sub_seq, sub_sub_seq, 'camera_data', 'images')
+                        depth_path = os.path.join(seq, sub_seq, sub_sub_seq, 'camera_data', 'depths')
+                        # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
+                        extrinsic_path = os.path.join(seq, sub_seq, sub_sub_seq, 'camera_data', 'extrinsics')
+                        intrinsic_path = os.path.join(seq, sub_seq, sub_sub_seq, 'camera_data', 'intrinsics')
+                        num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
+                        
+                        if num_frames < 24:
+                            print(f"Skipping sequence {seq} with only {num_frames} frames.")
+                            continue
+                        
+                        new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
+                        old_sequence_length = len(self.full_idxs)
+                        self.full_idxs.extend(new_sequence)
+                        
+                        all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')))
+                        all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')))
+                        all_extrinsic_paths = sorted(glob.glob(os.path.join(extrinsic_path, '*.npy')))
+                        all_intrinsic_paths = sorted(glob.glob(os.path.join(intrinsic_path, '*.npy')))
+                        self.all_rgb_paths.extend(all_rgb_paths)
+                        self.all_depth_paths.extend(all_depth_paths)
+                        
+                        N = len(self.full_idxs)
 
-                    all_extrinsic_numpy = []
-                    for extrinsic_path in all_extrinsic_paths:
-                        all_extrinsic_numpy.append(np.load(extrinsic_path).astype(np.float32))
-                        self.all_extrinsic.extend([np.load(extrinsic_path).astype(np.float32)])
-                    for intrinsic_path in all_intrinsic_paths:
-                        intrinsic_seq = np.load(intrinsic_path).astype(np.float32)
-                        self.all_intrinsic.extend([intrinsic_seq])
-                    
-                    assert len(self.all_rgb_paths) == N and \
-                        len(self.all_depth_paths) == N and \
-                        len(self.all_extrinsic) == N and \
-                        len(self.all_intrinsic) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
+                        all_extrinsic_numpy = []
+                        try:
+                            for extrinsic_path in all_extrinsic_paths:
+                                all_extrinsic_numpy.append(np.load(extrinsic_path).astype(np.float32))
+                                self.all_extrinsic.extend([np.load(extrinsic_path).astype(np.float32)])
+                            for intrinsic_path in all_intrinsic_paths:
+                                intrinsic_seq = np.load(intrinsic_path).astype(np.float32)
+                                self.all_intrinsic.extend([intrinsic_seq])
+                        except Exception as e:
+                            print(f"Error loading extrinsics or intrinsics for {seq} {sub_seq} {sub_sub_seq}: {e}")
+                            raise 
+                            
+                        assert len(self.all_rgb_paths) == N and \
+                            len(self.all_depth_paths) == N and \
+                            len(self.all_extrinsic) == N and \
+                            len(self.all_intrinsic) == N, f"Number of images, depth maps, and annotations do not match in {seq} {sub_seq} {sub_sub_seq}."
 
-                    assert len(all_extrinsic_numpy) != 0
-                    ranking, dists = compute_ranking(all_extrinsic_numpy, lambda_t=1.0, normalize=True, batched=True)
-                    ranking = np.array(ranking, dtype=np.int32)
-                    ranking += old_sequence_length
-                    for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
-                        self.rank[i] = ranking[ind]
+                        assert len(all_extrinsic_numpy) != 0
+                        ranking, dists = compute_ranking(all_extrinsic_numpy, lambda_t=1.0, normalize=True, batched=True)
+                        ranking = np.array(ranking, dtype=np.int32)
+                        ranking += old_sequence_length
+                        for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
+                            self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/robotwin_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/robotwin_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/robotwin_annotations/{dset}/depth_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/robotwin_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/robotwin_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/robotwin_annotations/{dset}/rankings.joblib')
-            joblib.dump(self.all_seg_mask, f'annotations/robotwin_annotations/{dset}/seg_mask.joblib')
+            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/depth_paths.json')
+            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/rankings.joblib')
+            # joblib.dump(self.all_seg_mask, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -309,7 +320,7 @@ class RoboTwin(BaseStereoViewDataset):
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
             'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
-            'world_coords_points': ('world_points', np.stack),
+            'world_coords_points': ('world_points', lambda x: np.stack([p.astype(np.float32) for p in x])),
             'true_shape': ('true_shape', np.array),
             'point_mask': ('valid_mask', np.stack),
             'label': ('label', lambda x: x),  # Keep as list
@@ -332,7 +343,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = 'datasets/robotwin'  # Change this to the correct path
+    dataset_location = '/mnt/lihao/phs_datasets/robotwin'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -381,4 +392,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    visualize_scene((100,0,num_views))
+    # visualize_scene((100,0,num_views))

@@ -4,33 +4,34 @@
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Giant"
+exp_name = "DA3-Giant-adt-col-hoi-rlb-rob"
 logging_dir = "logs"
 
 # == Logging Configuration ==
-wandb = False
+wandb = True
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 2000
-checkpointing_steps = 20000
+num_save_visual = 500
+checkpointing_steps = 5000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-giant.yaml"
-model_checkpoint_path = "checkpoints/da3-giant/model.safetensors"
+model_config = "src/depth_anything_3/configs/da3-giant-metric.yaml"
+model_checkpoint_path = "checkpoints/da3-giant-1.1/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
-use_ray_pose = False
-use_gs_infer = True
+use_ray_pose = True
+use_gs_infer = False
 
 # Additional freeze options for memory optimization
 gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
 seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
+scale_head_freeze = False      # Freeze scale head if not using scale loss
 
 # ======================================================
 # LoRA Configuration (NEW)
@@ -91,6 +92,10 @@ depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
 depth_valid_range = 0.98
 
+# Scale loss (only active when scale_head_freeze = False)
+scale_loss_weight = 1.0
+scale_loss_log_space = True
+
 # Gaussian loss (only active when gs_head_freeze = False)
 gaussian_loss_weight = 1.0
 gaussian_use_conf = False      # Use confidence mask from depth
@@ -119,6 +124,11 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"  8_000 @ ADT(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 10_000 @ Colosseum(use_cache = True, verbose=False, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 20_000 @ HOI4D(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 10_000 @ RLBench(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 40_000 @ RoboTwin(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+                 
 test_dataset = None  # Set to None to use same as train_dataset
 

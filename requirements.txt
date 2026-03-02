@@ -22,3 +22,11 @@ plyfile
 pillow_heif
 safetensors
 pycolmap
+tensorbaoard
+mmengine
+accelerate
+iopath
+wandb
+transformers
+lpips
+peft

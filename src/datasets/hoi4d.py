@@ -65,7 +65,7 @@ def load_camera_info_from_json(json_path):
 
 class HOI4D(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='datasets/HOI4D',
+                 dataset_location='/mnt/lihao/phs_datasets/hoi4d',
                  dset='',
                  use_cache=True,
                  use_augs=False,
@@ -105,14 +105,14 @@ class HOI4D(BaseStereoViewDataset):
         self.sequences = sorted(glob.glob(os.path.join(dataset_location, dset, "*/")))
 
         if quick:
-           self.sequences = self.sequences[:2]
+           self.sequences = self.sequences[:1]
 
         if self.verbose:
             print(self.sequences)
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/hoi4d_annotations'
+            dataset_location = '/mnt/lihao/phs_datasets/annotations/hoi4d_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -135,7 +135,7 @@ class HOI4D(BaseStereoViewDataset):
                     print('seq', seq)
 
                 rgb_path = os.path.join(seq, 'images' )
-                depth_path = os.path.join(seq, 'lbdepth')
+                depth_path = os.path.join(seq, 'raw_depth')
                 annotaions_file_path = os.path.join(seq, 'camera', 'recon/split_0/info.json')
                 num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
@@ -166,12 +166,12 @@ class HOI4D(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind] 
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'annotations/hoi4d_annotations/{self.dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/hoi4d_annotations/{self.dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/hoi4d_annotations/{self.dset}/depth_paths.json')
-            joblib.dump(self.rank, f'annotations/hoi4d_annotations/{self.dset}/rankings.joblib')
-            joblib.dump(self.all_extrinsic, f'annotations/hoi4d_annotations/{self.dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/hoi4d_annotations/{self.dset}/intrinsics.joblib')
+            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/depth_paths.json')
+            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/rankings.joblib')
+            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/intrinsics.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
     
@@ -314,7 +314,7 @@ class HOI4D(BaseStereoViewDataset):
             'depthmap': ('depth', lambda x: np.stack([d[:, :, np.newaxis] for d in x]), 'depthmap'),
             'camera_pose': ('extrinsic', lambda x: np.stack([p[:3] for p in x], dtype=np.float32), 'camera_pose'),
             'camera_intrinsics': ('intrinsic', np.stack),
-            'world_coords_points': ('world_points', np.stack),
+            'world_coords_points': ('world_points', lambda x: np.stack([p.astype(np.float32) for p in x])),
             'true_shape': ('true_shape', np.array),
             'point_mask': ('valid_mask', np.stack),
             'label': ('label', lambda x: x),  # Keep as list
@@ -366,7 +366,7 @@ if __name__ == "__main__":
         return
 
     dataset = HOI4D(
-        dataset_location="datasets/HOI4D",
+        dataset_location="/mnt/lihao/phs_datasets/hoi4d",
         dset = '',
         use_cache = False,
         use_augs=use_augs, 
@@ -382,7 +382,7 @@ if __name__ == "__main__":
     dataset[(101,0,16)]
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
-    visualize_scene((400,0,num_views))
+    # visualize_scene((400,0,num_views))
     # print(len(dataset))
 
 
