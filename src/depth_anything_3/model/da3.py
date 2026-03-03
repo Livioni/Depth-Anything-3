@@ -155,8 +155,6 @@ class DepthAnything3Net(nn.Module):
             if scale_token is not None:
                 output = self._process_scale_head(scale_token, output)
         
-        output.images = x
-        
         return output
 
     def _process_scale_head(self, scale_token: torch.Tensor, output: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:

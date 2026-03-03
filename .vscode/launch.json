@@ -1,0 +1,44 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Main Table Evaluation GT",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "Evaluation/da3_main_table_gt.py",
+            "console": "integratedTerminal",
+        },
+        {
+            "name": "Main Table Evaluation",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "Evaluation/da3_main_table.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "configs/test/da3-giant-test-on-droid.py",
+            ]
+        },
+        {
+            "name": "Training Debug",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "train_da3.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "configs/train/da3-giant-train-debug.py",
+            ]
+        },
+        {
+            "name": "Python Debugger: Current File",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        }
+    ]
+}

@@ -34,7 +34,6 @@ input_images*/
 # OS files
 .DS_Store
 
-.vscode
 src/debug_main.py
 temp*.png
 /outputs
