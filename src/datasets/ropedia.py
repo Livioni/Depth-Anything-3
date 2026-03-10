@@ -475,7 +475,7 @@ class Ropedia(BaseStereoViewDataset):
                 assert res, f"{err_msg} with {key}={val} for view {view_name(view)}"
 
             # Compute 3D coordinates
-            # view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
+            view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
             world_coords_points, cam_coords_points, point_mask = depth_to_world_coords_points(
                 view['depthmap'], view['camera_pose'], view['camera_intrinsics'], z_far=self.z_far
             )

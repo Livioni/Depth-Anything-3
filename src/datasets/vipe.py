@@ -234,9 +234,9 @@ class Vipe(BaseStereoViewDataset):
                     print('seq', seq)
                     
 
-                rgb_path = os.path.join(seq, "rgb")
+                rgb_path = os.path.join(seq, "images","left")
                 depth_path = os.path.join(seq, "depths")
-                extrinsics_file_path = glob.glob(os.path.join(seq, "poses", "*.npz"))[0]
+                extrinsics_file_path = glob.glob(os.path.join(seq, "pose", "*.npz"))[0]
                 intrinsics_file_path = os.path.join(seq, "annotation.hdf5")
                 num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
@@ -429,7 +429,7 @@ class Vipe(BaseStereoViewDataset):
                 assert res, f"{err_msg} with {key}={val} for view {view_name(view)}"
 
             # Compute 3D coordinates
-            # view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
+            view['camera_pose'] = closed_form_inverse_se3(view['camera_pose'][None])[0]
             world_coords_points, cam_coords_points, point_mask = depth_to_world_coords_points(
                 view['depthmap'], view['camera_pose'], view['camera_intrinsics'], z_far=self.z_far
             )
@@ -483,7 +483,7 @@ if __name__ == "__main__":
         use_cache=False,
         use_augs=use_augs,
         top_k=50,
-        quick=False,
+        quick=True,
         verbose=True,
         resolution=(512, 384),
         aug_crop=16,

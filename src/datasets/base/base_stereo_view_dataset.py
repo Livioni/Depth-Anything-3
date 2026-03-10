@@ -9,7 +9,7 @@ import numpy as np
 import torch
 
 from src.datasets.base.easy_dataset import EasyDataset
-from src.datasets.utils.transforms import ImgNorm, ColorJitter
+from src.datasets.utils.transforms import ImgNorm, ColorJitter, ToTensor
 from src.utils.geometry import depthmap_to_absolute_camera_coordinates
 import src.datasets.utils.cropping as cropping
 
@@ -29,7 +29,7 @@ class BaseStereoViewDataset (EasyDataset):
     def __init__(self, *,  # only keyword arguments
                  split=None,
                  resolution=None,  # square_size or (width, height) or list of [(width,height), ...]
-                 transform=ImgNorm,
+                 transform=ToTensor,
                  aug_crop=False,
                  aug_focal=False,
                  z_far=0,

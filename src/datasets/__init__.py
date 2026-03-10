@@ -9,7 +9,6 @@ from .hoi4d import HOI4D # noqa
 from .realm import Realm # noqa
 from .colosseum import Colosseum # noqa
 from .vkitti import Vkitti # noqa
-from .pi3slam import Pi3slam # noqa
 from .vipe import Vipe
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
