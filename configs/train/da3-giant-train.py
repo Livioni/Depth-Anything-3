@@ -87,6 +87,10 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 ray_loss_weight = 1.0
 ray_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
+# Point loss
+point_loss_weight = 1.0
+point_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
+
 # Depth loss
 depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
@@ -124,11 +128,11 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"  8_000 @ ADT(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 10_000 @ Colosseum(use_cache = True, verbose=False, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 20_000 @ HOI4D(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 10_000 @ RLBench(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 40_000 @ RoboTwin(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f" 16_000 @ ADT(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 20_000 @ Colosseum(use_cache = True, verbose=False, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 40_000 @ HOI4D(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 20_000 @ RLBench(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                 + 60_000 @ RoboTwin(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
                  
 test_dataset = None  # Set to None to use same as train_dataset
 

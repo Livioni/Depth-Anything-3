@@ -4,9 +4,10 @@
 # --------------------------------------------------------
 # DUST3R default transforms
 # --------------------------------------------------------
-from src.utils.image import ImgNorm
+from src.utils.image import ImgNorm, ToTensor
 from src.datasets.utils.augmentation import get_image_augmentation
 # define the standard image transforms
 
 ColorJitter = get_image_augmentation()
+
 

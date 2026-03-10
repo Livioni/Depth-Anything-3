@@ -9,7 +9,6 @@ from typing import Any
 import numpy as np
 import torch
 from tqdm import tqdm
-from mmengine.config import Config
 
 # ============================================================
 # 让脚本在任意工作目录下都能 import 本仓库代码
@@ -56,21 +55,6 @@ def build_dataset(dataset, seq_len=None, batch_size=None, num_workers=None, test
     print(f"{split} dataset length: ", len(loader))
     return loader
 
-def _merge_overrides_into_cfg(cfg: Config, args: argparse.Namespace) -> Config:
-    """把命令行 override 写回 cfg（行为与训练脚本一致）。"""
-    override_keys = [
-        "output_dir",
-        "exp_name",
-        "model_checkpoint_path",
-        "num_workers",
-    ]
-    for k in override_keys:
-        v = getattr(args, k, None)
-        if v is not None:
-            cfg[k] = v
-    return cfg
-
-
 @torch.no_grad()
 def main(args: argparse.Namespace) -> None:
     # ============== 日志 ==============
@@ -78,15 +62,13 @@ def main(args: argparse.Namespace) -> None:
     logger = logging.getLogger("eval")
 
     # ============== 配置 ==============
-    cfg = Config.fromfile(args.config)
-    cfg = _merge_overrides_into_cfg(cfg, args)
 
-    eval_dataset = args.eval_dataset or cfg.get("test_dataset") or cfg.get("train_dataset")
+    eval_dataset = args.eval_dataset
     if eval_dataset is None:
-        raise ValueError("未指定评测数据集：请传入 --eval_dataset 或在 config 里设置 test_dataset/train_dataset")
+        raise ValueError("未指定评测数据集：请传入 --eval_dataset 或 --test_dataset 或 --train_dataset")
 
     # ============== 输出路径（沿用原脚本风格） ==============
-    save_dir = os.path.join(cfg.get("output_dir", "outputs"), cfg.get("exp_name", "DA3-Eval"), "eval")
+    save_dir = os.path.join(args.output_dir, args.exp_name, "eval")
     logging_dir = os.path.join(save_dir, args.logging_dir)
     visualization_dir = os.path.join(save_dir, "scene")
     os.makedirs(logging_dir, exist_ok=True)
@@ -113,12 +95,24 @@ def main(args: argparse.Namespace) -> None:
     # model.eval()
 
     # ============== 测试集 ==============
+    if args.eval_dataset == "RLbench":
+        eval_dataset = f"100 @ RLBench(use_cache = True, quick = False, top_k = 32, dset='', specify = True, z_far = 50, aug_crop=16, resolution=[(504, 280)], transform=ImgNorm, seed=985)"
+    elif args.eval_dataset == "Colosseum":
+        eval_dataset = f"100 @ Colosseum(use_cache = True, quick = False, top_k = 32, dset='', specify = True, z_far = 50, aug_crop=16, resolution=[(504, 280)], transform=ImgNorm, seed=985)"
+    elif args.eval_dataset == "HOI4D":
+        eval_dataset = f"100 @ HOI4D(use_cache = True, quick = False, top_k = 32, dset='', specify = True, z_far = 50, aug_crop=16, resolution=[(504, 280)], transform=ImgNorm, seed=985)"
+    elif args.eval_dataset == "RoboTwin":
+        eval_dataset = f"100 @ RoboTwin(use_cache = True, quick = False, top_k = 32, dset='', specify = True, z_far = 50, aug_crop=16, resolution=[(504, 280)], transform=ImgNorm, seed=985)"
+    else:
+        raise ValueError(f"未支持的数据集: {args.eval_dataset}")
+    
+    
     logger.info(f"Building test dataset: {eval_dataset}")
     test_dataloader = build_dataset(
         dataset=eval_dataset,
-        seq_len=cfg.get("seq_len", 10),
+        seq_len=args.seq_len,
         batch_size=args.batch_size,
-        num_workers=args.num_workers if args.num_workers is not None else cfg.get("num_workers", 8),
+        num_workers=args.num_workers,
         test=True,
     )
 
@@ -185,24 +179,6 @@ def main(args: argparse.Namespace) -> None:
         batch["world_points"] = batch["world_points"].to(device, non_blocking=True)
 
         seq_len = int(batch["images"].shape[1])
-        use_ray_pose = args.use_ray_pose if args.use_ray_pose is not None else bool(cfg.get("use_ray_pose", False))
-        infer_gs = args.infer_gs if args.infer_gs is not None else bool(cfg.get("use_gs_infer", False))
-
-        # 前向（与训练一致的调用签名）
-        # if args.use_pose_condition:
-        #     predictions = model(
-        #         x=batch["images"],
-        #         extrinsics=extra_input_extrinsic_gt.to(device, non_blocking=True),
-        #         intrinsics=batch["intrinsic"],
-        #         infer_gs=infer_gs,
-        #         use_ray_pose=use_ray_pose,
-        #     )
-        # else:
-        #     predictions = model(
-        #         x=batch["images"],
-        #         infer_gs=infer_gs,
-        #         use_ray_pose=use_ray_pose,
-        #     )
 
         depth_conf = torch.ones_like(batch["depth"])
         predictions = {
@@ -218,7 +194,7 @@ def main(args: argparse.Namespace) -> None:
         
         # ===== Save Visualizations =====
         if args.save_visual_every > 0 and (index % args.save_visual_every == 0):
-            prediction_mode = cfg.get("vis_prediction_mode", "Predicted Depth")
+            prediction_mode = args.vis_prediction_mode
             predictions_0 = select_first_batch(predictions)
             # 适配 visual_util 的可视化接口（同时支持 extrinsics/extrinsic 两种 key）
             vis_pred: dict[str, Any] = dict(predictions_0)
@@ -229,7 +205,7 @@ def main(args: argparse.Namespace) -> None:
             if isinstance(vis_pred.get("depth_conf"), torch.Tensor):
                 vis_pred["depth_conf"] = vis_pred["depth_conf"].detach().cpu().numpy()
 
-            if cfg.get("use_gt", False):
+            if args.use_gt:
                 vis_pred["ray"] = batch["ray_map"]
                 vis_pred["depth"] = batch["depth"].detach().cpu().numpy()[..., None]
 
@@ -369,30 +345,31 @@ def _str2bool(v: str) -> bool:
 
 def parse_args():
     p = argparse.ArgumentParser(description="Depth Anything 3 单机评测脚本（参考 train_da3.py）")
-    # 配置与权重
-    p.add_argument("--config", type=str, default="configs/da3-giant-train.py", help="训练/评测共用的 mmengine config")
-    p.add_argument("--model_checkpoint_path", type=str, default=None, help="覆盖 config 里的 model_checkpoint_path（safetensors）")
-
     # 数据
-    p.add_argument("--eval_dataset", type=str, default=None, help="覆盖 config 里的 test_dataset/train_dataset（字符串表达式）")
+    p.add_argument("--eval_dataset", type=str, default="RLbench", help="覆盖 config 里的 test_dataset/train_dataset（字符串表达式）")
     p.add_argument("--batch-size", type=int, default=1)
-    p.add_argument("--num-workers", type=int, default=None)
+    p.add_argument("--seq_len", type=int, default=10, help="序列长度")
+    p.add_argument("--num-workers", type=int, default=8, help="数据加载器的工作进程数")
     p.add_argument("--test_iteration", type=int, default=100, help="选取多少个样本进行测试")
 
     # 推理开关
     p.add_argument("--save_visual_every", type=int, default=10, help="每隔多少 iter 存一次 ply；<=0 表示关闭")
     p.add_argument("--use_pose_condition", action="store_true", help="评测时使用 GT pose 作为条件输入（与训练的 pose-condition 一致）")
-    p.add_argument("--use_ray_pose", type=_str2bool, default=None, help="覆盖 config 的 use_ray_pose（true/false）")
-    p.add_argument("--infer_gs", type=_str2bool, default=None, help="覆盖 config 的 use_gs_infer（true/false）")
+    p.add_argument("--use_ray_pose", type=_str2bool, default=False, help="使用射线姿态")
+    p.add_argument("--infer_gs", type=_str2bool, default=False, help="推理时使用高斯")
+    p.add_argument("--use_gt", type=_str2bool, default=True, help="使用真实值进行可视化")
+
+    # 可视化
+    p.add_argument("--vis_prediction_mode", type=str, default="Predicted Depth", help="可视化预测模式")
 
     # 设备/精度
     p.add_argument("--cpu", action="store_true", help="强制使用 CPU")
 
-    # 输出路径（可覆盖 config）
-    p.add_argument("--output_dir", type=str, default=None)
-    p.add_argument("--exp_name", type=str, default=None)
+    # 输出路径
+    p.add_argument("--output_dir", type=str, default="eval_output", help="输出目录")
+    p.add_argument("--exp_name", type=str, default="DA3-Eval", help="实验名称")
     # 评测输出子目录（不回写到 config）
-    p.add_argument("--logging_dir", "--logging-dir", dest="logging_dir", type=str, default="logs")
+    p.add_argument("--logging_dir", dest="logging_dir", type=str, default="logs")
 
     return p.parse_args()
 

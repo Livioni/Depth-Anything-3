@@ -1,3 +1,4 @@
+
 # Copyright (C) 2024-present Naver Corporation. All rights reserved.
 # Licensed under CC BY-NC-SA 4.0 (non-commercial use only).
 #
@@ -18,16 +19,20 @@ from PIL import Image
 import json
 import joblib
 import h5py
+import os
+os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
 
 from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
 from src.utils.geometry import closed_form_inverse_se3, depth_to_world_coords_points
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
-from src.datasets.utils.misc import threshold_depth_map, threshold_confidence_map
+from src.datasets.utils.misc import threshold_depth_map, threshold_confidence_map, read_depth
 from src.utils.image import imread_cv2
+
 
 np.random.seed(125)
 torch.multiprocessing.set_sharing_strategy('file_system')
+
 
 def load_calibration_json(file_path):
     """加载标定JSON文件"""
@@ -148,7 +153,7 @@ def load_extrinsics_from_hdf5(hdf5_file_path):
         return [], np.array([])
     
     
-class Ropedia(BaseStereoViewDataset):
+class Vipe(BaseStereoViewDataset):
     def __init__(self,
                  dataset_location='datasets/ropedia',
                  dset='',
@@ -229,15 +234,11 @@ class Ropedia(BaseStereoViewDataset):
                     print('seq', seq)
                     
 
-                rgb_path = os.path.join(seq, "images", "left")
-                # depth_path = os.path.join(seq, "depth.hdf5")
-                # depth_path = os.path.join(seq, "depths")
-                depth_path = os.path.join(seq, "depths_foundationcrop")
-                # annotaions_file_path = os.path.join(seq, "annotation.hdf5")
-                extrinsics_file_path = os.path.join(seq, "poses", "poses.npy")
+                rgb_path = os.path.join(seq, "rgb")
+                depth_path = os.path.join(seq, "depths")
+                extrinsics_file_path = glob.glob(os.path.join(seq, "poses", "*.npz"))[0]
                 intrinsics_file_path = os.path.join(seq, "annotation.hdf5")
-                # num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
-                num_frames = 500
+                num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
                 if num_frames < 24:
                     print('skipping %s, too few images' % (seq))
@@ -246,35 +247,14 @@ class Ropedia(BaseStereoViewDataset):
                 new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
                 old_sequence_length = len(self.full_idxs)
                 self.full_idxs.extend(new_sequence)
-                self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png')))[:num_frames])
-                # self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.png'))))
-                self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.npy')))[:num_frames])
+                self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png'))))
+                self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.npy'))))
                 
-                # with h5py.File(depth_path, 'r') as f:
-                #     depth_length = f['depth'].shape[0]    
-                #     f.close()
-
-                # extrinsics_list, all_extrinsic_numpy = load_extrinsics_from_hdf5(annotaions_file_path)
-
-                # if len(extrinsics_list) == 0:
-                #     print(f"警告: 从 {annotaions_file_path} 未能加载到外参数据，跳过序列 {seq}")
-                #     continue
-
-                # 验证外参数据数量是否与帧数匹配
-                # if len(extrinsics_list) != num_frames:
-                #     print(f"警告: 外参数据数量 ({len(extrinsics_list)}) 与帧数 ({num_frames}) 不匹配，使用前 {min(len(extrinsics_list), num_frames)} 帧")
-
-                # 只使用与帧数匹配的外参数据
-                # valid_extrinsics = extrinsics_list[:num_frames]
-                # self.all_extrinsic.extend(valid_extrinsics)
+                extrinsic_seq = np.load(extrinsics_file_path)['data'].astype(np.float32)
+                self.all_extrinsic.extend(extrinsic_seq)
                 
-                valid_extrinsics = np.load(extrinsics_file_path).astype(np.float32)[:num_frames]
-                self.all_extrinsic.extend(valid_extrinsics)
-
-                # 更新 all_extrinsic_numpy 只包含有效的数据
-                all_extrinsic_numpy = np.array(valid_extrinsics)
-                
-                K = extract_intrinsic_matrix_from_hdf5(intrinsics_file_path)
+                # K = extract_intrinsic_matrix_from_hdf5(intrinsics_file_path)
+                K = np.array([[200, 0.0, 256], [0.0, 200, 256], [0.0, 0.0, 1.0]], dtype=np.float32)
                 self.all_intrinsic.extend([K]*num_frames)
 
                 N = len(self.full_idxs)
@@ -282,13 +262,9 @@ class Ropedia(BaseStereoViewDataset):
                         len(self.all_intrinsic) == N and \
                         len(self.all_extrinsic) == N and \
                         len(self.all_depth_paths) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
-                        # depth_length == num_frames, f"Number of images, depth maps, and annotations do not match in {seq}."
-                        
-                # self.all_depth_paths.extend([depth_path]*depth_length)
-                # self.sequence_idxs.extend(range(depth_length))
 
-                assert len(all_extrinsic_numpy) != 0, f"序列 {seq} 中没有有效的外参数据"
-                ranking, dists = compute_ranking(all_extrinsic_numpy, lambda_t=1.0, normalize=True, batched=True)
+                assert len(extrinsic_seq) != 0, f"序列 {seq} 中没有有效的外参数据"
+                ranking, dists = compute_ranking(extrinsic_seq, lambda_t=1.0, normalize=True, batched=True)
                 ranking = np.array(ranking, dtype=np.int32)
                 ranking += old_sequence_length
                 for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
@@ -385,30 +361,8 @@ class Ropedia(BaseStereoViewDataset):
         for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):    
             # Load and preprocess images
             rgb_image = imread_cv2(impath, cv2.IMREAD_COLOR)
-            # with h5py.File(depthpath, 'r') as f:
-            #     depthmap = f['depth'][sequence_idx].astype(np.float32)
-            #     confidence = f['confidence'][sequence_idx].astype(np.float32)
-            #     f.close()
-            
-            # depthmap = imread_cv2(depthpath, cv2.IMREAD_UNCHANGED).astype(np.float32) / 1000.0
-            
-            depthmap = np.load(depthpath).astype(np.float32)
+            depthmap = np.load(depthpath)
             depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
-            H, W = depthmap.shape
-
-            # Center crop rgb_image to match depthmap dimensions and adjust intrinsics
-            rgb_image, intrinsics = self._center_crop_rgb_to_depth(rgb_image, intrinsics, (H, W))
-
-
-            # Apply confidence-based masking at original resolution
-            # Keep top 30% highest confidence pixels (mask out bottom 70%)
-            # confidence_mask = threshold_confidence_map(confidence,
-            #                                          use_percentile=True,
-            #                                          keep_top_percentile=40.0)
-            # depthmap[~confidence_mask] = 0  # Mask out low-confidence depth values
-
-            # Resize depthmap to 512x512 using nearest neighbor interpolation
-            # depthmap = cv2.resize(depthmap, (512, 512), interpolation=cv2.INTER_NEAREST)
 
             depthmap = threshold_depth_map(depthmap, max_percentile=95, min_percentile=-1)
 
@@ -523,8 +477,8 @@ if __name__ == "__main__":
     use_augs = False
     n_views_list = range(num_views)
 
-    dataset = Ropedia(
-        dataset_location="datasets/ropedia",
+    dataset = Vipe(
+        dataset_location="datasets/ropedia_vipe",
         dset='',
         use_cache=False,
         use_augs=use_augs,
@@ -556,8 +510,8 @@ if __name__ == "__main__":
                         image=colors,
                         cam_size=cam_size)
         # return viz.show()
-        return viz.save_glb('ropedia_scene_crop_0_new_pose.glb')
+        return viz.save_glb('ropedia_vipe_100.glb')
 
     dataset[(0, 0, num_views)]
-    visualize_scene((0, 0, num_views))
+    visualize_scene((100, 0, num_views))
     print('dataset loaded')

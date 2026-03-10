@@ -561,6 +561,47 @@ def threshold_depth_map(
 
     return depth_map
 
+
+def threshold_confidence_map(
+    confidence_map: np.ndarray,
+    min_confidence: float = 0.5,
+    use_percentile: bool = False,
+    keep_top_percentile: float = 30.0,
+) -> np.ndarray:
+    """
+    Creates a boolean mask from confidence map based on confidence threshold.
+
+    Args:
+        confidence_map (np.ndarray):
+            Input confidence map (H, W).
+        min_confidence (float):
+            Minimum confidence threshold. If use_percentile=False, this is an
+            absolute threshold. If use_percentile=True, this parameter is ignored.
+        use_percentile (bool):
+            Whether to use percentile-based thresholding.
+        keep_top_percentile (float):
+            If use_percentile=True, keep pixels above this percentile threshold.
+            For example, 30.0 means keep top 30% highest confidence pixels.
+
+    Returns:
+        np.ndarray:
+            Boolean mask (H, W) where True indicates valid (high confidence) pixels.
+            Returns None if confidence_map is None.
+    """
+    if confidence_map is None:
+        return None
+
+    if use_percentile:
+        # Calculate percentile threshold to keep top N% pixels
+        threshold = np.nanpercentile(confidence_map, 100 - keep_top_percentile)
+        mask = confidence_map >= threshold
+    else:
+        # Use absolute threshold
+        mask = confidence_map >= min_confidence
+
+    return mask
+
+
 def depth_to_world_coords_points(
     depth_map: np.ndarray,
     extrinsic: np.ndarray,
@@ -679,7 +720,11 @@ def read_depth(path: str, scale_adjustment=1.0) -> np.ndarray:
     """
     if path.lower().endswith(".exr"):
         # Ensure OPENCV_IO_ENABLE_OPENEXR is set to "1"
-        d = cv2.imread(path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)[..., 0]
+        img = cv2.imread(path, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
+        if len(img.shape) > 2:
+            d = img[..., 0]  # Multi-channel EXR, take first channel
+        else:
+            d = img  # Single-channel EXR
         d[d > 1e9] = 0.0
     elif path.lower().endswith(".png"):
         d = load_16big_png_depth(path)
