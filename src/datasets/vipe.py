@@ -164,6 +164,7 @@ class Vipe(BaseStereoViewDataset):
                  quick=False,
                  verbose=False,
                  specify=False,
+                 confidence_threshold=0.5,
                  *args,
                  **kwargs
                  ):
@@ -180,14 +181,14 @@ class Vipe(BaseStereoViewDataset):
         self.specify = specify
         self.use_augs = use_augs
         self.use_cache = use_cache
-
+        self.confidence_threshold = confidence_threshold
         # Initialize data containers
         self.full_idxs = []
-        self.sequence_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
         self.all_extrinsic = []
         self.all_intrinsic = []
+        self.all_conf_mask_paths = []
         self.rank = dict()
 
         # Find sequences
@@ -211,7 +212,7 @@ class Vipe(BaseStereoViewDataset):
 
             self.all_rgb_paths = load_json_list(os.path.join(dataset_location, dset, 'rgb_paths.json'))
             self.all_depth_paths = load_json_list(os.path.join(dataset_location, dset, 'depth_paths.json'))
-            self.sequence_idxs = load_json_list(os.path.join(dataset_location, dset, 'sequence_idxs.json'))
+            self.all_conf_mask_paths = load_json_list(os.path.join(dataset_location, dset, 'conf_mask_paths.json'))
 
             self.full_idxs = list(range(len(self.all_rgb_paths)))
 
@@ -233,50 +234,53 @@ class Vipe(BaseStereoViewDataset):
                 if self.verbose:
                     print('seq', seq)
                     
+                for sub_seq in os.listdir(seq):
 
-                rgb_path = os.path.join(seq, "images","left")
-                depth_path = os.path.join(seq, "depths")
-                extrinsics_file_path = glob.glob(os.path.join(seq, "pose", "*.npz"))[0]
-                intrinsics_file_path = os.path.join(seq, "annotation.hdf5")
-                num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
+                    rgb_path = os.path.join(seq, sub_seq, "images","left")
+                    depth_path = os.path.join(seq, sub_seq, "depths")
+                    conf_mask_path = os.path.join(seq, sub_seq, "conf_mask")
+                    extrinsics_file_path = glob.glob(os.path.join(seq, sub_seq, "pose", "*.npz"))[0]
+                    # intrinsics_file_path = os.path.join(seq, sub_seq, "annotation.hdf5")
+                    num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
-                if num_frames < 24:
-                    print('skipping %s, too few images' % (seq))
-                    continue
+                    if num_frames < 24:
+                        print('skipping %s, too few images' % (seq))
+                        continue
 
-                new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
-                old_sequence_length = len(self.full_idxs)
-                self.full_idxs.extend(new_sequence)
-                self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png'))))
-                self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.npy'))))
-                
-                extrinsic_seq = np.load(extrinsics_file_path)['data'].astype(np.float32)
-                self.all_extrinsic.extend(extrinsic_seq)
-                
-                # K = extract_intrinsic_matrix_from_hdf5(intrinsics_file_path)
-                K = np.array([[200, 0.0, 256], [0.0, 200, 256], [0.0, 0.0, 1.0]], dtype=np.float32)
-                self.all_intrinsic.extend([K]*num_frames)
+                    new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
+                    old_sequence_length = len(self.full_idxs)
+                    self.full_idxs.extend(new_sequence)
+                    self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png'))))
+                    self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.png'))))
+                    self.all_conf_mask_paths.extend(sorted(glob.glob(os.path.join(conf_mask_path, '*.png'))))
+                    
+                    extrinsic_seq = np.load(extrinsics_file_path)['data'].astype(np.float32)
+                    self.all_extrinsic.extend(extrinsic_seq)
+                    
+                    # K = extract_intrinsic_matrix_from_hdf5(intrinsics_file_path)
+                    K = np.array([[200, 0.0, 256], [0.0, 200, 256], [0.0, 0.0, 1.0]], dtype=np.float32)
+                    self.all_intrinsic.extend([K]*num_frames)
 
-                N = len(self.full_idxs)
-                assert len(self.all_rgb_paths) == N and \
-                        len(self.all_intrinsic) == N and \
-                        len(self.all_extrinsic) == N and \
-                        len(self.all_depth_paths) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
+                    N = len(self.full_idxs)
+                    assert len(self.all_rgb_paths) == N and \
+                            len(self.all_intrinsic) == N and \
+                            len(self.all_extrinsic) == N and \
+                            len(self.all_depth_paths) == N, f"Number of images, depth maps, and annotations do not match in {seq}."
 
-                assert len(extrinsic_seq) != 0, f"序列 {seq} 中没有有效的外参数据"
-                ranking, dists = compute_ranking(extrinsic_seq, lambda_t=1.0, normalize=True, batched=True)
-                ranking = np.array(ranking, dtype=np.int32)
-                ranking += old_sequence_length
-                for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
-                    self.rank[i] = ranking[ind]
+                    assert len(extrinsic_seq) != 0, f"序列 {seq} 中没有有效的外参数据"
+                    ranking, dists = compute_ranking(extrinsic_seq, lambda_t=1.0, normalize=True, batched=True)
+                    ranking = np.array(ranking, dtype=np.int32)
+                    ranking += old_sequence_length
+                    for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
+                        self.rank[i] = ranking[ind]
 
-            # os.makedirs(f'annotations/ropedia_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/ropedia_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'annotations/ropedia_annotations/{dset}/depth_paths.json')
-            # self._save_paths_to_json(self.sequence_idxs, f'annotations/ropedia_annotations/{dset}/sequence_idxs.json')
-            # joblib.dump(self.all_extrinsic, f'annotations/ropedia_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'annotations/ropedia_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'annotations/ropedia_annotations/{dset}/rankings.joblib')
+            os.makedirs(f'annotations/ropedia_annotations/{dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/ropedia_annotations/{dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/ropedia_annotations/{dset}/depth_paths.json')
+            self._save_paths_to_json(self.all_conf_mask_paths, f'annotations/ropedia_annotations/{dset}/conf_mask_paths.json')
+            joblib.dump(self.all_extrinsic, f'annotations/ropedia_annotations/{dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/ropedia_annotations/{dset}/intrinsics.joblib')
+            joblib.dump(self.rank, f'annotations/ropedia_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -354,18 +358,22 @@ class Vipe(BaseStereoViewDataset):
         depth_paths = [self.all_depth_paths[i] for i in full_idx]
         camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
         intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
+        conf_mask_paths = [self.all_conf_mask_paths[i] for i in full_idx]
         # sequence_idxs_list = [self.sequence_idxs[i] for i in full_idx]
 
         views = []
         # for impath, depthpath, camera_pose, intrinsics, sequence_idx in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list, sequence_idxs_list):
-        for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):    
+        for impath, depthpath, camera_pose, intrinsics, conf_mask_path in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list, conf_mask_paths):    
             # Load and preprocess images
             rgb_image = imread_cv2(impath, cv2.IMREAD_COLOR)
-            depthmap = np.load(depthpath)
+            depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0  
             depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
-
-            depthmap = threshold_depth_map(depthmap, max_percentile=95, min_percentile=-1)
-
+            conf_mask = cv2.imread(str(conf_mask_path), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 65535.0
+            
+            conf_mask = conf_mask > self.confidence_threshold
+            depthmap[~conf_mask] = 0
+            depthmap = threshold_depth_map(depthmap, max_percentile=80, min_percentile=-1)
+            
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
                 rgb_image, depthmap, intrinsics, resolution, rng, info=impath)
 
@@ -473,12 +481,12 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    num_views = 2
+    num_views = 4
     use_augs = False
     n_views_list = range(num_views)
 
     dataset = Vipe(
-        dataset_location="datasets/ropedia_vipe",
+        dataset_location="datasets/ropedias",
         dset='',
         use_cache=False,
         use_augs=use_augs,
@@ -489,6 +497,7 @@ if __name__ == "__main__":
         aug_crop=16,
         aug_focal=1,
         specify=False,
+        confidence_threshold=0.4,
         z_far=5,
         seed=985)
 
@@ -510,8 +519,8 @@ if __name__ == "__main__":
                         image=colors,
                         cam_size=cam_size)
         # return viz.show()
-        return viz.save_glb('ropedia_vipe_100.glb')
+        return viz.save_glb('ep12_1000.glb')
 
     dataset[(0, 0, num_views)]
-    visualize_scene((100, 0, num_views))
+    visualize_scene((1000, 0, num_views))
     print('dataset loaded')

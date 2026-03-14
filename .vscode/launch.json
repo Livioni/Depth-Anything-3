@@ -5,6 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Inspect HDF5",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "tools/ropedia_tools/inspect_hdf5.py",
+            "console": "integratedTerminal",
+            "args": [
+                "datasets/ropedias/0a5009c4-292b-40c6-b9ec-7c75cf54a112/ep12/annotation.hdf5"
+            ]
+        },
+        {
             "name": "Main Table Evaluation GT",
             "type": "debugpy",
             "request": "launch",
