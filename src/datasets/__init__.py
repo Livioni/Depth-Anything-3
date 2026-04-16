@@ -4,6 +4,7 @@ from .infinigen import Infinigen # noqa
 from .droid import Droid # noqa
 from .rlbench import RLBench # noqa
 from .robotwin import RoboTwin # noqa
+from .robolab import RoboLab # noqa
 from .adt import ADT # noqa
 from .hoi4d import HOI4D # noqa
 from .realm import Realm # noqa
