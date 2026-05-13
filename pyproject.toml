@@ -12,6 +12,7 @@ license = { text = "Apache-2.0" }
 authors = [{ name = "Your Name" }]
 
 dependencies = [
+    # Core / build
     "pre-commit",
     "trimesh",
     "torch>=2",
@@ -26,23 +27,41 @@ dependencies = [
     "fastapi",
     "uvicorn",
     "requests",
-    "typer",
+    "typer>=0.9.0",
     "pillow",
     "omegaconf",
     "evo",
     "e3nn",
-    "moviepy",
+    "moviepy==1.0.3",
     "plyfile",
     "pillow_heif",
     "safetensors",
-    "uvicorn",
-    "moviepy==1.0.3",
-    "typer>=0.9.0",
     "pycolmap",
+    # Merged from requirements.txt
+    "scipy",
+    "matplotlib",
+    "tqdm",
+    "onnxruntime",
+    "viser==0.2.23",
+    "h5py",
+    "mmengine",
+    "transformers",
+    "accelerate",
+    "wandb",
+    "diffusers",
+    "joblib",
+    "decord",
+    "iopath",
+    "tensorboard",
+    "gradio==5.17.1",
+    "hydra-core",
+    "pydantic==2.10.6",
+    "lpips",
+    "peft",
 ]
 
 [project.optional-dependencies]
-app = ["gradio>=5", "pillow>=9.0"] # requires that python3>=3.10
+app = ["pillow>=9.0"] # requires that python3>=3.10
 gs = ["gsplat @ git+https://github.com/nerfstudio-project/gsplat.git@0b4dddf04cb687367602c01196913cde6a743d70"]
 all = ["depth-anything-3[app,gs]"]
 

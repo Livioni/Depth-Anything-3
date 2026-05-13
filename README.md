@@ -37,8 +37,7 @@ DA-Next/
 ├── train_utils.py               # training utilities (loaders, schedulers, losses)
 ├── infer.py                     # minimal inference example
 ├── demo.py                      # interactive demo with viser / GLB export
-├── visual_util.py               # GLB / point-cloud / PCA visualization helpers
-└── requirements.txt
+└── visual_util.py               # GLB / point-cloud / PCA visualization helpers
 ```
 
 ## 🔧 Setup
@@ -50,8 +49,7 @@ conda create -n dan python=3.11
 conda activate dan
 # Install the appropriate PyTorch suitable for your cuda version, For example
 pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
-pip install -r requirements.txt
-pip install -e . # Basic
+pip install -e . # Installs all runtime deps declared in pyproject.toml
 ```
 
 ### Checkpoints
@@ -102,7 +100,7 @@ A runnable version of the above lives in [infer.py](infer.py).
 
 ### Prepare Datasets
 
-DA-Next reuses the [SpatialBench data layout](../README.md#-dataset-coverage). Each entry in the training mixture is backed by a reader under [src/datasets/](src/datasets/) — one Python file per dataset. Setup is a **two-step** process per dataset: **(1) download** the processed dataset to a local path, then **(2) generate the annotation cache** by running the reader once with `use_cache=False`.
+DA-Next reuses the [OmniVGGT data layout](https://github.com/Livioni/OmniVGGT-official). Each entry in the training mixture is backed by a reader under [src/datasets/](src/datasets/) — one Python file per dataset. Setup is a **two-step** process per dataset: **(1) download** the processed dataset to a local path, then **(2) generate the annotation cache** by running the reader once with `use_cache=False`.
 
 #### Supported datasets
 
