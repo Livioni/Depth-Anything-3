@@ -65,7 +65,7 @@ def load_camera_info_from_json(json_path):
 
 class HOI4D(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/local/lihao/phs_datasets/hoi4d',
+                 dataset_location='<here is your dataset location>',  # for example /mnt/local/lihao/phs_datasets/hoi4d
                  dset='',
                  use_cache=True,
                  use_augs=False,
@@ -113,7 +113,7 @@ class HOI4D(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = '/mnt/local/lihao/phs_datasets/annotations/hoi4d_annotations'
+            dataset_location = '<here is your annotation path>'  # for example /mnt/local/lihao/phs_datasets/annotations/hoi4d_annotations
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             all_depth_mask_paths_file = os.path.join(dataset_location, dset, 'depth_mask_paths.json')
@@ -180,7 +180,7 @@ class HOI4D(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind] 
                     
             # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
-            # anno_root = f'/mnt/local/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}'
+            # anno_root = f'<here is your annotation path>/{self.dset}'
             # os.makedirs(anno_root, exist_ok=True)
             # self._save_paths_to_json(self.all_rgb_paths, os.path.join(anno_root, 'rgb_paths.json'))
             # self._save_paths_to_json(self.all_depth_paths, os.path.join(anno_root, 'depth_paths.json'))
@@ -392,7 +392,7 @@ if __name__ == "__main__":
         return
 
     dataset = HOI4D(
-        dataset_location="/mnt/local/lihao/phs_datasets/hoi4d",
+        dataset_location="<here is your dataset location>",  # for example /mnt/local/lihao/phs_datasets/hoi4d
         dset = '',
         use_cache = False,
         use_augs=use_augs, 

@@ -46,7 +46,7 @@ class RoboLab(BaseStereoViewDataset):
     """
 
     def __init__(self,
-                 dataset_location='/mnt/local/lihao/phs/datasets/robolab',
+                 dataset_location='<here is your dataset location>',  # for example /mnt/local/lihao/phs/datasets/robolab
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -57,7 +57,7 @@ class RoboLab(BaseStereoViewDataset):
                  specify=False,
                  min_frames=24,
                  save_cache=False,
-                 cache_location='/mnt/local/lihao/phs_datasets/annotations/robolab_annotations',
+                 cache_location='<here is your annotation path>',  # for example /mnt/local/lihao/phs_datasets/annotations/robolab_annotations
                  *args,
                  **kwargs
                  ):
@@ -358,7 +358,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = '/mnt/local/lihao/phs/datasets/robolab'
+    dataset_location = '<here is your dataset location>'  # for example /mnt/local/lihao/phs/datasets/robolab
     dset = ''
     use_augs = False
     num_views = 4

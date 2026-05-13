@@ -48,7 +48,7 @@ _DEFAULT_K = np.array([
 
 class Ropedia(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/local/lihao/phs_datasets/ropedia',
+                 dataset_location='<here is your dataset location>',  # for example /mnt/local/lihao/phs_datasets/ropedia
                  dset='',
                  use_cache=True,
                  use_augs=False,
@@ -84,7 +84,7 @@ class Ropedia(BaseStereoViewDataset):
         self.rank = dict()
 
         if self.use_cache:
-            cache_root = os.path.join('annotations/ropedia_annotations', dset)
+            cache_root = os.path.join('<here is your annotation path>', dset)
 
             def load_json_list(filename):
                 with open(filename, 'r', encoding='utf-8') as f:
@@ -361,7 +361,7 @@ if __name__ == "__main__":
     n_views_list = range(num_views)
 
     dataset = Ropedia(
-        dataset_location="/mnt/local/lihao/phs_datasets/ropedia",
+        dataset_location="<here is your dataset location>",  # for example /mnt/local/lihao/phs_datasets/ropedia
         dset='',
         use_cache=True,
         use_augs=False,

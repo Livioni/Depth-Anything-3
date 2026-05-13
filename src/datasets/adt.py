@@ -58,7 +58,7 @@ def load_depth_png_to_meters(depth_png_path: str | Path) -> np.ndarray:
 
 class ADT(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/local/lihao/phs_datasets/adt',
+                 dataset_location='<here is your dataset location>',  # for example /mnt/local/lihao/phs_datasets/adt
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -106,7 +106,7 @@ class ADT(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = '/mnt/local/lihao/phs_datasets/annotations/adt_annotations'
+            dataset_location = '<here is your annotation path>'  # for example /mnt/local/lihao/phs_datasets/annotations/adt_annotations
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             all_depth_mask_paths_file = os.path.join(dataset_location, dset, 'depth_mask_paths.json')
@@ -187,14 +187,14 @@ class ADT(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind]
                     
             # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
-            # os.makedirs(f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/depth_paths.json')
-            # self._save_paths_to_json(self.all_depth_mask_paths, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/depth_mask_paths.json')
-            # joblib.dump(self.all_extrinsic, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/rankings.joblib')
-            # joblib.dump(self.all_seg_mask, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/seg_mask.joblib')
+            # os.makedirs(f'<here is your annotation path>/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'<here is your annotation path>/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'<here is your annotation path>/{dset}/depth_paths.json')
+            # self._save_paths_to_json(self.all_depth_mask_paths, f'<here is your annotation path>/{dset}/depth_mask_paths.json')
+            # joblib.dump(self.all_extrinsic, f'<here is your annotation path>/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'<here is your annotation path>/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'<here is your annotation path>/{dset}/rankings.joblib')
+            # joblib.dump(self.all_seg_mask, f'<here is your annotation path>/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -357,7 +357,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = '/mnt/local/lihao/phs_datasets/adt'  # Change this to the correct path
+    dataset_location = '<here is your dataset location>'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -383,7 +383,7 @@ if __name__ == "__main__":
                         cam_size=cam_size)
         # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('adt-10-flyingpoints.glb')
+        viz.save_glb('adt-10.glb')
         return 
 
     dataset = ADT(

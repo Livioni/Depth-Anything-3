@@ -237,7 +237,24 @@ Training hyperparameters are defined in a Python file under [configs/train/](con
 | **Losses** | `ray_loss_weight`, `depth_loss_weight`, `scale_loss_weight` |
 | **Dataset** | `train_batch_images=18` (fixed), `num_workers`, multi-resolution `resolution=[(504, H) ...]` |
 
-> Keep `use_ray_pose=True` and `use_gs_infer=False` and `use_gs_infer=False` for  and GS headDA-veext — the cam decoder and GS head have been removed.
+> Keep `use_ray_pose=True` and `use_gs_infer=False` and `use_gs_infer=False` for all situations.
+
+#### `pose_condition_prob` (pose-prior dropout)
+
+`pose_condition_prob` controls the probability that, on a given training step, the model is fed **ground-truth camera poses** (extrinsics + intrinsics) as an auxiliary conditioning input. With probability `1 - pose_condition_prob` the model receives only images and must recover geometry purely from visual features. Concretely, in [train_dan.py:270-281](train_dan.py#L270-L281):
+
+```python
+pose_condition_prob = cfg.get("pose_condition_prob", 0.0)
+use_pose = torch.rand(1).item() < pose_condition_prob
+if use_pose:
+    predictions = model(x=batch['images'],
+                        extrinsics=extra_input_extrinsic_gt,
+                        intrinsics=batch['intrinsic'], ...)
+else:
+    predictions = model(x=batch['images'], ...)
+```
+
+Setting it to `0.2` means roughly **20% of steps train the pose-conditioned branch** and 80% train the pose-free branch. 
 
 Dataset string follows the SpatialBench mixing syntax, for example:
 
@@ -251,7 +268,7 @@ train_dataset = (
 )
 ```
 
-Each entry is `N @ DatasetClass(use_cache=True, top_k=32, z_far=50, resolution=..., transform=ColorJitter, seed=985)`. The dataset readers live under [src/datasets/](src/datasets/) and follow the [SpatialBench data layout](../README.md#-dataset-coverage).
+Each entry is `N @ DatasetClass(use_cache=True, top_k=32, z_far=50, resolution=..., transform=ColorJitter, seed=985)`.
 
 ### Launch
 

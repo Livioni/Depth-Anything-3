@@ -24,7 +24,7 @@ R_conv = np.array([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtyp
 
 class Unreal4k(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/local/lihao/phs_datasets/unreal4k',
+                 dataset_location='<here is your dataset location>',  # for example /mnt/local/lihao/phs_datasets/unreal4k
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -63,7 +63,7 @@ class Unreal4k(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset))
 
         if self.use_cache:
-            anno_root = '/mnt/local/lihao/phs_datasets/annotations/unreal4k_annotations'
+            anno_root = '<here is your annotation path>'  # for example /mnt/local/lihao/phs_datasets/annotations/unreal4k_annotations
             with open(os.path.join(anno_root, dset, 'rgb_paths.json'), 'r') as f:
                 self.all_rgb_paths = json.load(f)
             with open(os.path.join(anno_root, dset, 'depth_paths.json'), 'r') as f:
@@ -117,7 +117,7 @@ class Unreal4k(BaseStereoViewDataset):
                         self.rank[i] = ranking[ind]
 
             # 默认禁用，cache 已离线生成
-            # anno_root = f'/mnt/local/lihao/phs_datasets/annotations/unreal4k_annotations/{dset}'
+            # anno_root = f'<here is your annotation path>/{dset}'
             # os.makedirs(anno_root, exist_ok=True)
             # self._save_paths_to_json(self.all_rgb_paths, os.path.join(anno_root, 'rgb_paths.json'))
             # self._save_paths_to_json(self.all_depth_paths, os.path.join(anno_root, 'depth_paths.json'))
@@ -255,7 +255,7 @@ if __name__ == "__main__":
 
     num_views = 8
     dataset = Unreal4k(
-        dataset_location='/mnt/local/lihao/phs_datasets/unreal4k',
+        dataset_location='<here is your dataset location>',  # for example /mnt/local/lihao/phs_datasets/unreal4k
         dset='',
         use_cache=True,
         top_k=64,

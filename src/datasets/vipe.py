@@ -202,7 +202,7 @@ class Vipe(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset))
 
         if self.use_cache:
-            dataset_location = 'annotations/ropedia_annotations'
+            dataset_location = '<here is your annotation path>'  # for example annotations/ropedia_annotations
 
             # 加载并转换JSON数据
             def load_json_list(filename):
@@ -276,13 +276,13 @@ class Vipe(BaseStereoViewDataset):
                         self.rank[i] = ranking[ind]
 
             # 默认禁用，cache 已离线生成
-            # os.makedirs(f'annotations/ropedia_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/ropedia_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'annotations/ropedia_annotations/{dset}/depth_paths.json')
-            # self._save_paths_to_json(self.all_conf_mask_paths, f'annotations/ropedia_annotations/{dset}/conf_mask_paths.json')
-            # joblib.dump(self.all_extrinsic, f'annotations/ropedia_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'annotations/ropedia_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'annotations/ropedia_annotations/{dset}/rankings.joblib')
+            # os.makedirs(f'<here is your annotation path>/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'<here is your annotation path>/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'<here is your annotation path>/{dset}/depth_paths.json')
+            # self._save_paths_to_json(self.all_conf_mask_paths, f'<here is your annotation path>/{dset}/conf_mask_paths.json')
+            # joblib.dump(self.all_extrinsic, f'<here is your annotation path>/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'<here is your annotation path>/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'<here is your annotation path>/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
