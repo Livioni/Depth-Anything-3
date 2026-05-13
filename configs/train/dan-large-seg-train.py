@@ -1,10 +1,10 @@
 # ======================================================
-# OmniVGGT Training Configuration
+# DAN Training Configuration
 # ======================================================
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Large-Ray"
+exp_name = "DAN-Large-Seg-Full"
 logging_dir = "logs"
 
 # == Logging Configuration ==
@@ -12,19 +12,19 @@ wandb = False
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 2000
-checkpointing_steps = 20000
+num_save_visual = 1000
+checkpointing_steps = 10000
 save_each_epoch = False
 
 # == Model Configuration ==
-model_config = "src/depth_anything_3/configs/da3-large.yaml"
+model_config = "src/depth_anything_3/configs/da3-large-tri.yaml"
 model_checkpoint_path = "checkpoints/da3-large/model.safetensors"
 model_requires_grad = True
 backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = False
-use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
+use_gradient_checkpointing = True  # Enable gradient checkpointing to save memory
 use_ray_pose = False
 use_gs_infer = False
 
@@ -42,7 +42,7 @@ lora_lr = 5e-5                      # Learning rate for LoRA parameters (typical
 # == Training Configuration ==
 mixed_precision = "bf16"  # Options: "no", "fp16", "bf16"
 seed = 42
-num_train_epochs = 10
+num_train_epochs = 5
 gradient_accumulation_steps = 2
 max_grad_norm = 1.0
 drop_prob = 0.1
@@ -74,7 +74,7 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 
 # == Loss Configuration ==
 # Camera loss
-camera_loss_weight = 0.5 # mainly use ray loss
+camera_loss_weight = 5.0
 camera_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
 # Ray Loss
@@ -106,6 +106,8 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"20000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+train_dataset = f"40000 @ Scannetppv2(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
+                + 20000 @ Infinigen(use_cache = True, quick = False, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+
 test_dataset = None  # Set to None to use same as train_dataset
 

@@ -1,13 +1,13 @@
 # ======================================================
-# Depth Anything 3 Evaluation Configuration
+# DAN Evaluation Configuration
 # ======================================================
 
 output_dir = "eval_output"
-exp_name = "DA3-Giant-40k-RayPose-RLBench-test"
+exp_name = "DAN-Giant-40k-RayPose-RLBench-test"
 
 # == Model (required by train_utils.load_model) ==
 model_config = "src/depth_anything_3/configs/da3-giant-metric.yaml"
-model_checkpoint_path = "outputs/DA3-Giant-adt-col-hoi-rlb-rob/checkpoint-3-40000/model.safetensors"
+model_checkpoint_path = "outputs/DAN-Giant-adt-col-hoi-rlb-rob/checkpoint-3-40000/model.safetensors"
 
 # Evaluation only: no gradients needed
 model_requires_grad = False
@@ -16,7 +16,7 @@ use_lora = False
 # Gradient checkpointing is mainly for training; keep it off by default for eval
 use_gradient_checkpointing = False
 
-# == Inference toggles (read by Evaluation/da3_main_table.py) ==
+# == Inference toggles (read by Evaluation/dan_main_table.py) ==
 use_ray_pose = True
 use_gs_infer = False
 

@@ -8,7 +8,7 @@
 
 </div>
 
-> **Note**: This directory is a **git submodule** of [SpatialBench](../README.md). Environment setup, dataset download, and the evaluation harness are documented in the parent README — they are **not duplicated here**. This file only covers what is specific to DA-Next: model architecture changes on top of DA3, training, and inference.
+> **Note**: This directory is a **git submodule** of [SpatialBench](../README.md). Environment setup, dataset download, and the evaluation harness are documented in the parent README.
 
 <div align="center">
   <img src="assets/danext.png" alt="SpatialBench Overview" width="800"/>
@@ -20,9 +20,7 @@
 DA-Next is the variant of [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) used as the **`Ours`** entry in the SpatialBench leaderboard. Compared to vanilla DA3, DA-Next adds:
 
 - A **scale head** that predicts metric scale directly from the backbone features (depth supervision must be in meters).
-- A **camera encoder** (`CameraEnc`) that injects optional camera priors into the network.
-- **Ray-based pose decoding** (`use_ray_pose = True`) instead of DA3's `CameraDec` head — `cam_dec`, `gs_head`, and `gs_adapter` are removed.
-- Training configuration with mixed-precision (`bf16`), gradient checkpointing, dropout for the pose prior, and a multi-resolution schedule.
+- Training scripts and configuration with mixed-precision (`bf16`), gradient checkpointing, dropout for the pose prior, and a multi-resolution schedule.
 
 ## 📁 Repository Layout
 
@@ -35,7 +33,7 @@ DA-Next/
 ├── configs/
 │   ├── train/                   # training configs (Python)
 │   └── test/                    # evaluation configs (Python)
-├── train_da3.py                 # training entry point
+├── train_dan.py                 # training entry point
 ├── train_utils.py               # training utilities (loaders, schedulers, losses)
 ├── infer.py                     # minimal inference example
 ├── demo.py                      # interactive demo with viser / GLB export
@@ -67,7 +65,7 @@ from safetensors.torch import load_file
 api = DepthAnything3(model_name="da3-giant")
 
 # 2) Load fine-tuned weights
-sd = load_file("outputs/DA3-Giant-test/checkpoint-0-5000/model.safetensors")
+sd = load_file("outputs/DAN-Giant-test/checkpoint-0-5000/model.safetensors")
 api.model.load_state_dict(sd, strict=False)
 api = api.to("cuda").eval()
 
@@ -87,14 +85,6 @@ prediction = api.inference(
 ```
 
 A runnable version of the above lives in [infer.py](infer.py).
-
-### Interactive demo
-
-```bash
-python demo.py --image_folder example/office/images --use_ray_pose
-```
-
-`demo.py` exports a viewable `.glb` and starts a viser server for interactive inspection.
 
 ## 🏋️ Training
 
@@ -155,7 +145,7 @@ cam_enc:
 
 ### Training Config
 
-Training hyperparameters are defined in a Python file under [configs/train/](configs/train/). Reference: [da3-giant-train.py](configs/train/da3-giant-train.py).
+Training hyperparameters are defined in a Python file under [configs/train/](configs/train/). Reference: [dan-giant-train.py](configs/train/dan-giant-train.py).
 
 | Group | Key parameters |
 |-------|----------------|
@@ -192,22 +182,22 @@ Each entry is `N @ DatasetClass(use_cache=True, top_k=32, z_far=50, resolution=.
 Single node, 8 GPUs:
 
 ```bash
-accelerate launch --num_processes=8 train_da3.py \
-    --config configs/train/da3-giant-train.py
+accelerate launch --num_processes=8 train_dan.py \
+    --config configs/train/dan-giant-train.py
 ```
 
 Debug / smoke configs are provided in [configs/train/](configs/train/):
-- `da3-debug.py`, `da3-giant-train-debug.py`, `da3-giant-large-debug.py` — small-batch overfit configs
-- `da3-large-train.py`, `da3-large-seg-train.py` — DA3-Large variants
+- `dan-debug.py`, `dan-giant-train-debug.py`, `dan-giant-large-debug.py` — small-batch overfit configs
+- `dan-large-train.py`, `dan-large-seg-train.py` — DAN-Large variants
 
 ## 🧪 Evaluation
 
-Reference test config: [configs/test/da3-giant-test-on-rlbench.py](configs/test/da3-giant-test-on-rlbench.py). Important flags:
+Reference test config: [configs/test/dan-giant-test-on-rlbench.py](configs/test/dan-giant-test-on-rlbench.py). Important flags:
 
 ```python
 # Model
 model_config           = "src/depth_anything_3/configs/da3-giant-metric.yaml"
-model_checkpoint_path  = "outputs/DA3-Giant-adt-col-hoi-rlb-rob/checkpoint-3-40000/model.safetensors"
+model_checkpoint_path  = "outputs/DAN-Giant-adt-col-hoi-rlb-rob/checkpoint-3-40000/model.safetensors"
 model_requires_grad    = False
 use_gradient_checkpointing = False
 use_lora               = False

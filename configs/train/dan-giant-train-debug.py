@@ -1,18 +1,18 @@
 # ======================================================
-# DA3 Training Configuration
+# DAN Training Configuration
 # ======================================================
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DA3-Giant-adt-col-hoi-rlb-rob-v2"
+exp_name = "DAN-Giant-test"
 logging_dir = "logs"
 
 # == Logging Configuration ==
-wandb = True
+wandb = False
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 1000
+num_save_visual = 50
 checkpointing_steps = 5000
 save_each_epoch = False
 
@@ -24,6 +24,7 @@ backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = True
+scale_head_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = True
 use_gs_infer = False
@@ -31,7 +32,6 @@ use_gs_infer = False
 # Additional freeze options for memory optimization
 gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
 seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
-scale_head_freeze = False      # Freeze scale head if not using scale loss
 
 # ======================================================
 # LoRA Configuration (NEW)
@@ -48,9 +48,8 @@ lora_lr = 5e-5                      # Learning rate for LoRA parameters (typical
 mixed_precision = "bf16"  # Options: "no", "fp16", "bf16"
 seed = 42
 num_train_epochs = 10
-gradient_accumulation_steps = 2
+gradient_accumulation_steps = 1
 max_grad_norm = 1.0
-drop_prob = 0.1
 pose_condition_prob = 0.2
 
 # == Dataset Configuration ==
@@ -87,18 +86,14 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 ray_loss_weight = 1.0
 ray_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
-# Point loss
-point_loss_weight = 1.0
-point_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
-
 # Depth loss
 depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
 depth_valid_range = 0.98
 
-# Scale loss (only active when scale_head_freeze = False)
+#scale loss
 scale_loss_weight = 1.0
-scale_loss_log_space = True
+log_space = True
 
 # Gaussian loss (only active when gs_head_freeze = False)
 gaussian_loss_weight = 1.0
@@ -128,11 +123,6 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f" 16_000 @ ADT(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 20_000 @ Colosseum(use_cache = True, verbose=False, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 40_000 @ HOI4D(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 20_000 @ RLBench(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
-                 + 60_000 @ RoboTwin(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
-                 
+train_dataset = f"2000 @ RLBench(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
 test_dataset = None  # Set to None to use same as train_dataset
 

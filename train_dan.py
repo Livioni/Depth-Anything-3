@@ -1,7 +1,7 @@
 # ======================================================
-# Depth Anything 3 Training Script
+# DAN Training Script
 # ======================================================
-# accelerate launch --num_processes=8 train_da3.py --config configs/train/da3-giant-train.py
+# accelerate launch --num_processes=8 train_dan.py --config configs/train/dan-giant-train.py
 
 import os
 import gc

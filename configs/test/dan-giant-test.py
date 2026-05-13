@@ -1,10 +1,10 @@
 # ======================================================
-# Depth Anything 3 Evaluation Configuration
+# DAN Evaluation Configuration
 # ======================================================
 
 # == Common ==
 output_dir = "outputs"
-exp_name = "DA3-Giant-ori-raydepth-pose-test"
+exp_name = "DAN-Giant-ori-raydepth-pose-test"
 
 # == Model (required by train_utils.load_model) ==
 model_config = "src/depth_anything_3/configs/da3-giant.yaml"
@@ -17,7 +17,7 @@ use_lora = False
 # Gradient checkpointing is mainly for training; keep it off by default for eval
 use_gradient_checkpointing = False
 
-# == Inference toggles (read by Evaluation/da3_main_table.py) ==
+# == Inference toggles (read by Evaluation/dan_main_table.py) ==
 use_ray_pose = True
 use_gs_infer = False
 
