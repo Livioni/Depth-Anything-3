@@ -239,9 +239,10 @@ class Vipe(BaseStereoViewDataset):
                     rgb_path = os.path.join(seq, sub_seq, "images","left")
                     depth_path = os.path.join(seq, sub_seq, "depths")
                     conf_mask_path = os.path.join(seq, sub_seq, "conf_mask")
-                    extrinsics_file_path = glob.glob(os.path.join(seq, sub_seq, "pose", "*.npz"))[0]
+                    # extrinsics_file_path = glob.glob(os.path.join(seq, sub_seq, "pose", "*.npz"))[0]
+                    extrinsics_file_path = os.path.join(seq, sub_seq, "pose_from_hdf5", "left.npz")
                     # intrinsics_file_path = os.path.join(seq, sub_seq, "annotation.hdf5")
-                    num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
+                    num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))-1
 
                     if num_frames < 24:
                         print('skipping %s, too few images' % (seq))
@@ -250,9 +251,9 @@ class Vipe(BaseStereoViewDataset):
                     new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
                     old_sequence_length = len(self.full_idxs)
                     self.full_idxs.extend(new_sequence)
-                    self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png'))))
-                    self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.png'))))
-                    self.all_conf_mask_paths.extend(sorted(glob.glob(os.path.join(conf_mask_path, '*.png'))))
+                    self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png')))[:-1])
+                    self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.png')))[:-1])
+                    self.all_conf_mask_paths.extend(sorted(glob.glob(os.path.join(conf_mask_path, '*.png')))[:-1])
                     
                     extrinsic_seq = np.load(extrinsics_file_path)['data'].astype(np.float32)
                     self.all_extrinsic.extend(extrinsic_seq)
@@ -274,13 +275,14 @@ class Vipe(BaseStereoViewDataset):
                     for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
                         self.rank[i] = ranking[ind]
 
-            os.makedirs(f'annotations/ropedia_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'annotations/ropedia_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'annotations/ropedia_annotations/{dset}/depth_paths.json')
-            self._save_paths_to_json(self.all_conf_mask_paths, f'annotations/ropedia_annotations/{dset}/conf_mask_paths.json')
-            joblib.dump(self.all_extrinsic, f'annotations/ropedia_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'annotations/ropedia_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'annotations/ropedia_annotations/{dset}/rankings.joblib')
+            # 默认禁用，cache 已离线生成
+            # os.makedirs(f'annotations/ropedia_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/ropedia_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'annotations/ropedia_annotations/{dset}/depth_paths.json')
+            # self._save_paths_to_json(self.all_conf_mask_paths, f'annotations/ropedia_annotations/{dset}/conf_mask_paths.json')
+            # joblib.dump(self.all_extrinsic, f'annotations/ropedia_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'annotations/ropedia_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'annotations/ropedia_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -486,7 +488,7 @@ if __name__ == "__main__":
     n_views_list = range(num_views)
 
     dataset = Vipe(
-        dataset_location="datasets/ropedias",
+        dataset_location="datasets/ropeida",
         dset='',
         use_cache=False,
         use_augs=use_augs,
@@ -497,7 +499,7 @@ if __name__ == "__main__":
         aug_crop=16,
         aug_focal=1,
         specify=False,
-        confidence_threshold=0.4,
+        confidence_threshold=0.3,
         z_far=5,
         seed=985)
 
@@ -519,8 +521,8 @@ if __name__ == "__main__":
                         image=colors,
                         cam_size=cam_size)
         # return viz.show()
-        return viz.save_glb('ep12_1000.glb')
+        return viz.save_glb('ep1_0_vipe_pose_reverse.glb')
 
     dataset[(0, 0, num_views)]
-    visualize_scene((1000, 0, num_views))
+    visualize_scene((0, 0, num_views))
     print('dataset loaded')

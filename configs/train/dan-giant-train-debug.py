@@ -12,8 +12,8 @@ wandb = False
 tensorboard = True
 report_to = "tensorboard"
 num_save_log = 10
-num_save_visual = 50
-checkpointing_steps = 5000
+num_save_visual = 100
+checkpointing_steps = 500
 save_each_epoch = False
 
 # == Model Configuration ==
@@ -24,7 +24,6 @@ backbone_freeze = False
 head_freeze = False
 cam_enc_freeze = False
 cam_dec_freeze = True
-scale_head_freeze = False
 use_gradient_checkpointing = True   # Enable gradient checkpointing to save memory
 use_ray_pose = True
 use_gs_infer = False
@@ -32,9 +31,10 @@ use_gs_infer = False
 # Additional freeze options for memory optimization
 gs_head_freeze = True         # Freeze GS head to save memory (if not using 3DGS)
 seg_head_freeze = True        # Freeze segmentation head (if not using segmentation)
+scale_head_freeze = False      # Freeze scale head if not using scale loss
 
 # ======================================================
-# LoRA Configuration (NEW)
+# LoRA Configuration # noqa
 # ======================================================
 use_lora = False                     # Enable LoRA fine-tuning
 lora_r = 32                          # LoRA rank (higher = more parameters, typically 4-32)
@@ -47,9 +47,10 @@ lora_lr = 5e-5                      # Learning rate for LoRA parameters (typical
 # == Training Configuration ==
 mixed_precision = "bf16"  # Options: "no", "fp16", "bf16"
 seed = 42
-num_train_epochs = 10
-gradient_accumulation_steps = 1
+num_train_epochs = 3
+gradient_accumulation_steps = 2
 max_grad_norm = 1.0
+drop_prob = 0.1
 pose_condition_prob = 0.2
 
 # == Dataset Configuration ==
@@ -86,22 +87,26 @@ eta_min_factor = 0.1  # Minimum learning rate factor for cosine decay
 ray_loss_weight = 1.0
 ray_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
 
+# Point loss
+point_loss_weight = 1.0
+point_loss_type = "l1"  # Options: "l1", "l2", "smooth_l1"
+
 # Depth loss
 depth_loss_weight = 1.0
 depth_gradient_loss_fn = "grad"
 depth_valid_range = 0.98
 
-#scale loss
+# Scale loss (only active when scale_head_freeze = False)
 scale_loss_weight = 1.0
-log_space = True
+scale_loss_log_space = True
 
-# Gaussian loss (only active when gs_head_freeze = False)
-gaussian_loss_weight = 1.0
-gaussian_use_conf = False      # Use confidence mask from depth
-gaussian_use_mask = True       # Use valid mask from batch
-gaussian_use_alpha = False     # Use alpha from gaussian output
-gaussian_use_lpips = True     # Use LPIPS perceptual loss
-gaussian_lpips_weight = 0.1    # Weight for LPIPS loss
+# Gaussian loss 
+# gaussian_loss_weight = 1.0
+# gaussian_use_conf = False      # Use confidence mask from depth
+# gaussian_use_mask = True       # Use valid mask from batch
+# gaussian_use_alpha = False     # Use alpha from gaussian output
+# gaussian_use_lpips = True     # Use LPIPS perceptual loss
+# gaussian_lpips_weight = 0.1    # Weight for LPIPS loss
 
 # == Visualization Configuration ==
 vis_conf_threshold = 0.2
@@ -123,6 +128,7 @@ resolution = [(504, 504), (504, 490), (504, 476),
               (504, 336), (504, 322), (504, 308),
               (504, 294), (504, 280) ]
 
-train_dataset = f"2000 @ RLBench(use_cache = False, quick = True, top_k = 64, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
-test_dataset = None  # Set to None to use same as train_dataset
+train_dataset = f" 100 @ ADT(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
+                 
+test_dataset = None  
 

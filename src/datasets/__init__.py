@@ -7,10 +7,18 @@ from .robotwin import RoboTwin # noqa
 from .robolab import RoboLab # noqa
 from .adt import ADT # noqa
 from .hoi4d import HOI4D # noqa
-from .realm import Realm # noqa
 from .colosseum import Colosseum # noqa
 from .vkitti import Vkitti # noqa
 from .vipe import Vipe
+from .ropedia import Ropedia # noqa
+from .hypersim import Hypersim # noqa
+from .spring import Spring # noqa
+from .mapfree import MapFree # noqa
+from .mp3d import Mp3d # noqa
+from .mvs_synth import MvsSynth # noqa
+from .tartanair import TarTanAir # noqa
+from .unreal4k import Unreal4k # noqa
+from .waymo import Waymo # noqa
 from .utils.transforms import ColorJitter, ImgNorm # noqa
 
 

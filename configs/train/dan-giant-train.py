@@ -4,7 +4,7 @@
 
 # == Common Configuration ==
 output_dir = "outputs"
-exp_name = "DAN-Giant-adt-col-hoi-rlb-rob-v2"
+exp_name = "DAN-Giant"
 logging_dir = "logs"
 
 # == Logging Configuration ==
@@ -34,7 +34,7 @@ seg_head_freeze = True        # Freeze segmentation head (if not using segmentat
 scale_head_freeze = False      # Freeze scale head if not using scale loss
 
 # ======================================================
-# LoRA Configuration (NEW)
+# LoRA Configuration # noqa
 # ======================================================
 use_lora = False                     # Enable LoRA fine-tuning
 lora_r = 32                          # LoRA rank (higher = more parameters, typically 4-32)
@@ -100,13 +100,13 @@ depth_valid_range = 0.98
 scale_loss_weight = 1.0
 scale_loss_log_space = True
 
-# Gaussian loss (only active when gs_head_freeze = False)
-gaussian_loss_weight = 1.0
-gaussian_use_conf = False      # Use confidence mask from depth
-gaussian_use_mask = True       # Use valid mask from batch
-gaussian_use_alpha = False     # Use alpha from gaussian output
-gaussian_use_lpips = True     # Use LPIPS perceptual loss
-gaussian_lpips_weight = 0.1    # Weight for LPIPS loss
+# Gaussian loss 
+# gaussian_loss_weight = 1.0
+# gaussian_use_conf = False      # Use confidence mask from depth
+# gaussian_use_mask = True       # Use valid mask from batch
+# gaussian_use_alpha = False     # Use alpha from gaussian output
+# gaussian_use_lpips = True     # Use LPIPS perceptual loss
+# gaussian_lpips_weight = 0.1    # Weight for LPIPS loss
 
 # == Visualization Configuration ==
 vis_conf_threshold = 0.2
@@ -134,5 +134,5 @@ train_dataset = f" 16_000 @ ADT(use_cache = True, quick = False, top_k = 32, dse
                  + 20_000 @ RLBench(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985) \
                  + 60_000 @ RoboTwin(use_cache = True, quick = False, top_k = 32, dset='', z_far = 50, aug_crop=16, resolution={resolution}, transform=ColorJitter, seed=985)"
                  
-test_dataset = None  # Set to None to use same as train_dataset
+test_dataset = None  
 

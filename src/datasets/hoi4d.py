@@ -65,7 +65,7 @@ def load_camera_info_from_json(json_path):
 
 class HOI4D(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/lihao/phs_datasets/hoi4d',
+                 dataset_location='/mnt/local/lihao/phs_datasets/hoi4d',
                  dset='',
                  use_cache=True,
                  use_augs=False,
@@ -94,6 +94,7 @@ class HOI4D(BaseStereoViewDataset):
         self.full_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
+        self.all_depth_mask_paths = []
         self.all_traj_paths = []
         self.all_extrinsic = []
         self.all_intrinsic = []
@@ -112,22 +113,29 @@ class HOI4D(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = '/mnt/lihao/phs_datasets/annotations/hoi4d_annotations'
+            dataset_location = '/mnt/local/lihao/phs_datasets/annotations/hoi4d_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
+            all_depth_mask_paths_file = os.path.join(dataset_location, dset, 'depth_mask_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
                 self.all_rgb_paths = json.load(file)
             with open(all_depth_paths_file, 'r', encoding='utf-8') as file:
-                self.all_depth_paths = json.load(file)                          
+                self.all_depth_paths = json.load(file)
 
             self.all_rgb_paths = [self.all_rgb_paths[str(i)] for i in range(len(self.all_rgb_paths))]
             self.all_depth_paths = [self.all_depth_paths[str(i)] for i in range(len(self.all_depth_paths))]
+            if os.path.isfile(all_depth_mask_paths_file):
+                with open(all_depth_mask_paths_file, 'r', encoding='utf-8') as file:
+                    depth_mask_paths_raw = json.load(file)
+                self.all_depth_mask_paths = [depth_mask_paths_raw[str(i)] for i in range(len(depth_mask_paths_raw))]
+            else:
+                self.all_depth_mask_paths = [None] * len(self.all_rgb_paths)
             self.full_idxs = list(range(len(self.all_rgb_paths)))
             self.rank = joblib.load(os.path.join(dataset_location, dset, 'rankings.joblib'))
             self.all_intrinsic = joblib.load(os.path.join(dataset_location, dset, 'intrinsics.joblib'))
             self.all_extrinsic = joblib.load(os.path.join(dataset_location, dset, 'extrinsics.joblib'))
-            
-            print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))            
+
+            print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
         else:
             for seq in self.sequences:
@@ -136,6 +144,7 @@ class HOI4D(BaseStereoViewDataset):
 
                 rgb_path = os.path.join(seq, 'images' )
                 depth_path = os.path.join(seq, 'raw_depth')
+                depth_mask_path = os.path.join(seq, 'depth_mask')
                 annotaions_file_path = os.path.join(seq, 'camera', 'recon/split_0/info.json')
                 num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
 
@@ -146,9 +155,14 @@ class HOI4D(BaseStereoViewDataset):
                 new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
                 old_sequence_length = len(self.full_idxs)
                 self.full_idxs.extend(new_sequence)
-                self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png')))) 
+                self.all_rgb_paths.extend(sorted(glob.glob(os.path.join(rgb_path, '*.png'))))
                 self.all_depth_paths.extend(sorted(glob.glob(os.path.join(depth_path, '*.png'))))
-            
+                all_depth_mask_paths = sorted(glob.glob(os.path.join(depth_mask_path, '*.png'))) if os.path.isdir(depth_mask_path) else []
+                if len(all_depth_mask_paths) == num_frames:
+                    self.all_depth_mask_paths.extend(all_depth_mask_paths)
+                else:
+                    self.all_depth_mask_paths.extend([None] * num_frames)
+
                 N = len(self.full_idxs)
                 
                 
@@ -165,13 +179,15 @@ class HOI4D(BaseStereoViewDataset):
                 for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
                     self.rank[i] = ranking[ind] 
                     
-            # # 保存为 JSON 文件
-            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/depth_paths.json')
-            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/rankings.joblib')
-            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}/intrinsics.joblib')
+            # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
+            # anno_root = f'/mnt/local/lihao/phs_datasets/annotations/hoi4d_annotations/{self.dset}'
+            # os.makedirs(anno_root, exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, os.path.join(anno_root, 'rgb_paths.json'))
+            # self._save_paths_to_json(self.all_depth_paths, os.path.join(anno_root, 'depth_paths.json'))
+            # self._save_paths_to_json(self.all_depth_mask_paths, os.path.join(anno_root, 'depth_mask_paths.json'))
+            # joblib.dump(self.rank, os.path.join(anno_root, 'rankings.joblib'))
+            # joblib.dump(self.all_extrinsic, os.path.join(anno_root, 'extrinsics.joblib'))
+            # joblib.dump(self.all_intrinsic, os.path.join(anno_root, 'intrinsics.joblib'))
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
     
@@ -202,13 +218,15 @@ class HOI4D(BaseStereoViewDataset):
             
             rgb_paths = [self.all_rgb_paths[i] for i in full_idx]
             depth_paths = [self.all_depth_paths[i] for i in full_idx]
+            depth_mask_paths = [self.all_depth_mask_paths[i] if i < len(self.all_depth_mask_paths) else None for i in full_idx]
             camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
             intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
-            
+
         else:
             full_idx = self.full_idxs[index]
             rgb_paths = [self.all_rgb_paths[full_idx]]
             depth_paths = [self.all_depth_paths[full_idx]]
+            depth_mask_paths = [self.all_depth_mask_paths[full_idx] if full_idx < len(self.all_depth_mask_paths) else None]
             camera_pose_list = [self.all_extrinsic[full_idx]]
             intrinsics_list = [self.all_intrinsic[full_idx]]
 
@@ -216,6 +234,7 @@ class HOI4D(BaseStereoViewDataset):
         for i in range(num):
             impath = rgb_paths[i]
             depthpath = depth_paths[i]
+            depth_mask_path = depth_mask_paths[i]
             camera_pose = camera_pose_list[i]
             intrinsics = intrinsics_list[i]
             # load image and depth
@@ -223,6 +242,13 @@ class HOI4D(BaseStereoViewDataset):
             rgb_image = rgb_image.convert("RGB")
             depthmap = cv2.imread(str(depthpath), cv2.IMREAD_ANYDEPTH).astype(np.float32) / 1000.0
             depthmap[~np.isfinite(depthmap)] = 0  # invalid
+
+            # 边缘点、飞点过滤 (depth_mask: uint8, 0/255)
+            if depth_mask_path is not None and os.path.isfile(depth_mask_path):
+                depth_mask = cv2.imread(depth_mask_path, cv2.IMREAD_UNCHANGED)
+                if depth_mask is not None:
+                    depthmap[depth_mask == 0] = 0
+
             depthmap = threshold_depth_map(depthmap, max_percentile=98, min_percentile=2)
                         
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
@@ -366,7 +392,7 @@ if __name__ == "__main__":
         return
 
     dataset = HOI4D(
-        dataset_location="/mnt/lihao/phs_datasets/hoi4d",
+        dataset_location="/mnt/local/lihao/phs_datasets/hoi4d",
         dset = '',
         use_cache = False,
         use_augs=use_augs, 

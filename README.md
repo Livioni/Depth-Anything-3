@@ -45,12 +45,15 @@ DA-Next/
 
 The base SpatialBench environment already provides PyTorch and most dependencies. Install the few DA-Next-specific extras on top:
 
-```bash
-# from the DA-Next/ directory
-pip install -r requirements.txt
-```
+### Checkpoints
 
-Place DA3 pretrained weights at `checkpoints/da3-giant-1.1/model.safetensors` (or update `model_checkpoint_path` in your config).
+Two kinds of weights are used by this repo: **(a) upstream Depth Anything 3 pretrained checkpoints** as the training initialization, and **(b) our fine-tuned DAN checkpoints** for inference / leaderboard reproduction. Place them under `checkpoints/` (or override `model_checkpoint_path` in your config).
+
+| Type | Variant | Default path | Source |
+|------|---------|--------------|--------|
+| **Upstream DA3** (init) | DA3-Giant-1.1 | `checkpoints/da3-giant-1.1/model.safetensors` | [depth-anything/DA3-GIANT-1.1](https://huggingface.co/depth-anything) |
+| **DAN (Ours)** | DAN-Giant | `checkpoints/dan-giant/model.safetensors` | [`<TODO: HuggingFace link>`](#) |
+
 
 ## 🚀 Quick Start
 
@@ -65,7 +68,7 @@ from safetensors.torch import load_file
 api = DepthAnything3(model_name="da3-giant")
 
 # 2) Load fine-tuned weights
-sd = load_file("outputs/DAN-Giant-test/checkpoint-0-5000/model.safetensors")
+sd = load_file("checkpoint_path_here")
 api.model.load_state_dict(sd, strict=False)
 api = api.to("cuda").eval()
 
@@ -87,6 +90,75 @@ prediction = api.inference(
 A runnable version of the above lives in [infer.py](infer.py).
 
 ## 🏋️ Training
+
+### Prepare Datasets
+
+DA-Next reuses the [SpatialBench data layout](../README.md#-dataset-coverage). Each entry in the training mixture is backed by a reader under [src/datasets/](src/datasets/) — one Python file per dataset. Setup is a **two-step** process per dataset: **(1) download** the processed dataset to a local path, then **(2) generate the annotation cache** by running the reader once with `use_cache=False`.
+
+#### Supported datasets
+
+| Reader file | Class | Notes |
+|-------------|-------|-------|
+| [`adt.py`](src/datasets/adt.py) | `ADT` | Aria Digital Twin (indoor, real / dynamic) |
+| [`colosseum.py`](src/datasets/colosseum.py) | `Colosseum` | Robot manipulation simulation |
+| [`droid.py`](src/datasets/droid.py) | `Droid` | DROID robot manipulation (wrist view) |
+| [`hoi4d.py`](src/datasets/hoi4d.py) | `HOI4D` | Hand–object interaction |
+| [`hypersim.py`](src/datasets/hypersim.py) | `Hypersim` | Photorealistic synthetic indoor scenes |
+| [`infinigen.py`](src/datasets/infinigen.py) | `Infinigen` | Procedural indoor / outdoor sim |
+| [`mapfree.py`](src/datasets/mapfree.py) | `MapFree` | MapFree visual relocalization |
+| [`mp3d.py`](src/datasets/mp3d.py) | `Mp3d` | Matterport3D indoor scans |
+| [`mvs_synth.py`](src/datasets/mvs_synth.py) | `MvsSynth` | MVS-Synth multi-view synthetic |
+| [`rlbench.py`](src/datasets/rlbench.py) | `RLBench` | Robot simulation tasks |
+| [`robolab.py`](src/datasets/robolab.py) | `RoboLab` | Isaac Sim synthetic (wrist view) |
+| [`robotwin.py`](src/datasets/robotwin.py) | `RoboTwin` | Bimanual robot simulation |
+| [`ropedia.py`](src/datasets/ropedia.py) | `Ropedia` | Xperience egocentric video |
+| [`scannetppv2.py`](src/datasets/scannetppv2.py) | `Scannetppv2` | ScanNet++ v2 (iPhone subset) |
+| [`spring.py`](src/datasets/spring.py) | `Spring` | Spring high-resolution stereo / depth |
+| [`tartanair.py`](src/datasets/tartanair.py) | `TarTanAir` | TartanAir SLAM benchmark |
+| [`unreal4k.py`](src/datasets/unreal4k.py) | `Unreal4k` | UnrealStereo4K synthetic |
+| [`vipe.py`](src/datasets/vipe.py) | `Vipe` | ViPE synthetic |
+| [`vkitti.py`](src/datasets/vkitti.py) | `Vkitti` | Virtual KITTI 2 driving sim |
+| [`waymo.py`](src/datasets/waymo.py) | `Waymo` | Waymo Open Dataset  |
+
+#### Step 1 — Download
+
+For DA-Next-5M dataset, download [DA-Next-5M](https://huggingface.co/datasets/HarrisonPENG/SpatialBenchmark) from huggingface. It contains the training samples used in [colosseum.py](DA-Next/src/datasets/colosseum.py), [rlbench.py](DA-Next/src/datasets/rlbench.py), [robolab.py](DA-Next/src/datasets/robolab.py), [ropedia.py](DA-Next/src/datasets/ropedia.py), and [robotwin.py](DA-Next/src/datasets/robotwin.py).
+
+For other dataset, download / preprocess each dataset you intend to use following the [CUT3R preprocessing guide](https://github.com/CUT3R/CUT3R/blob/main/docs/preprocess.md). After preprocessing, a scene should contain at least **RGB**, **depth**, and **camera parameters** (extrinsics + intrinsics); some readers additionally use sky masks. Point the reader at the resulting directory by editing the `dataset_location` default at the top of its `.py` file (or pass it explicitly in your config).
+
+#### Step 2 — Generate the annotation cache
+
+The first time you use a dataset, run its module directly with `use_cache=False` to traverse the scenes and build the JSON / joblib annotation files (paths, extrinsics, intrinsics, rankings). Subsequent training / evaluation runs set `use_cache=True` to load these instantly instead of rescanning.
+
+```bash
+# Run once per dataset, from the DA-Next/ directory
+python src/datasets/adt.py
+python src/datasets/colosseum.py
+python src/datasets/hoi4d.py
+python src/datasets/rlbench.py
+python src/datasets/robotwin.py
+# ... and so on for every dataset you plan to train on
+```
+
+Each `__main__` block instantiates the class with `use_cache=False, quick=False` and writes the cache to an annotations directory hard-coded near the top of the file (e.g. `/mnt/lihao/phs_datasets/annotations/adt_annotations/`). **Update that path** to wherever you want to keep annotation files before running. You can also use `visualize_scene((scene_idx, 0, num_views))` inside the `__main__` to spot-check that the loader produced a valid point cloud.
+
+#### Reader knobs you'll see in configs
+
+These options appear in every reader and in the `train_dataset` mixing string:
+
+| Param | Purpose |
+|-------|---------|
+| `dataset_location` | Root directory of the processed dataset on disk. |
+| `use_cache` | `False` on the first run (build cache); `True` afterwards (load cache fast). |
+| `dset` | Sub-split name for datasets that ship Train/Test or by-scene partitions. Leave `''` if unused. |
+| `top_k` | For each anchor frame, the number of nearest cameras to keep — controls sequence sampling. |
+| `z_far` | Max scene depth in meters; pixels farther than this are masked. |
+| `quick` | When `use_cache=False`, load only the first scene or two — useful for sanity checks. |
+| `specify` | Used during evaluation to freeze the items returned by `get_item`, making runs reproducible. |
+| `verbose` | Print scene paths and per-scene stats while scanning. |
+| `aug_crop`, `transform` | Augmentation knobs (random crop in px, `ColorJitter` / `ImgNorm`). |
+
+Once the cache for every dataset in your mixture exists, training and evaluation can use the `train_dataset` / `test_dataset` strings shown in the configs (all readers set `use_cache=True`).
 
 ### Model Configuration
 
@@ -130,7 +202,6 @@ scale_head:
   final_activation: softplus
   reduce: mean
 
-# NEW: camera encoder — injects optional camera priors.
 cam_enc:
   __object__:
     path: depth_anything_3.model.cam_enc
@@ -139,8 +210,6 @@ cam_enc:
 
 # REMOVED in DA-Next:
 # - cam_dec     (pose is decoded from rays instead → use_ray_pose=True)
-# - gs_head     (no 3D Gaussian Splatting head)
-# - gs_adapter
 ```
 
 ### Training Config
@@ -151,19 +220,19 @@ Training hyperparameters are defined in a Python file under [configs/train/](con
 |-------|----------------|
 | **Common** | `output_dir`, `exp_name`, `logging_dir` |
 | **Logging** | `wandb`, `tensorboard`, `checkpointing_steps`, `num_save_visual` |
-| **Model** | `model_config`, `model_checkpoint_path`, `use_gradient_checkpointing`, `use_ray_pose=True`, `use_gs_infer=False` |
-| **Freeze** | `backbone_freeze`, `head_freeze`, `cam_enc_freeze`, `scale_head_freeze`, `gs_head_freeze=True`, `seg_head_freeze=True` |
+| **Model** | `model_config`, `model_checkpoint_path`, `use_gradient_checkpointing`, `use_ray_pose=True` |
+| **Freeze** | `backbone_freeze`, `head_freeze`, `cam_enc_freeze`, `scale_head_freeze`, `seg_head_freeze=True` |
 | **LoRA** (optional) | `use_lora`, `lora_r`, `lora_alpha`, `lora_target_modules=["qkv", "out_proj"]`, `lora_lr` |
 | **Training** | `mixed_precision="bf16"`, `num_train_epochs`, `gradient_accumulation_steps`, `drop_prob`, `pose_condition_prob=0.2` (DA3 default) |
 | **Optimizer** | `optimizer_type="adamw"`, `adam_beta1=0.9`, `adam_beta2=0.95`, `adam_weight_decay=0.01` |
-| **Learning rates** | `lr`, `lr_backbone`, `lr_head`, `lr_cam_enc`, `lr_cam_dec`, `lr_gs_head` |
+| **Learning rates** | `lr`, `lr_backbone`, `lr_head`, `lr_cam_enc`, `lr_cam_dec`|
 | **Scheduler** | `lr_scheduler_type="cosine_with_warmup"`, `warmup_steps`, `eta_min_factor` |
-| **Losses** | `ray_loss_weight`, `depth_loss_weight`, `scale_loss_weight`, `gaussian_loss_weight` (only active if `gs_head_freeze=False`) |
+| **Losses** | `ray_loss_weight`, `depth_loss_weight`, `scale_loss_weight` |
 | **Dataset** | `train_batch_images=18` (fixed), `num_workers`, multi-resolution `resolution=[(504, H) ...]` |
 
-> Keep `use_ray_pose=True` and `use_gs_infer=False` for DA-Next — the cam decoder and GS head have been removed.
+> Keep `use_ray_pose=True` and `use_gs_infer=False` and `use_gs_infer=False` for  and GS headDA-veext — the cam decoder and GS head have been removed.
 
-Dataset string follows the SpatialBench / CUT3R mixing syntax, for example:
+Dataset string follows the SpatialBench mixing syntax, for example:
 
 ```python
 train_dataset = (
@@ -186,49 +255,12 @@ accelerate launch --num_processes=8 train_dan.py \
     --config configs/train/dan-giant-train.py
 ```
 
-Debug / smoke configs are provided in [configs/train/](configs/train/):
-- `dan-debug.py`, `dan-giant-train-debug.py`, `dan-giant-large-debug.py` — small-batch overfit configs
-- `dan-large-train.py`, `dan-large-seg-train.py` — DAN-Large variants
-
-## 🧪 Evaluation
-
-Reference test config: [configs/test/dan-giant-test-on-rlbench.py](configs/test/dan-giant-test-on-rlbench.py). Important flags:
-
-```python
-# Model
-model_config           = "src/depth_anything_3/configs/da3-giant-metric.yaml"
-model_checkpoint_path  = "outputs/DAN-Giant-adt-col-hoi-rlb-rob/checkpoint-3-40000/model.safetensors"
-model_requires_grad    = False
-use_gradient_checkpointing = False
-use_lora               = False
-
-# Inference toggles
-use_ray_pose           = True          # always True — cam_dec was removed
-use_gs_infer           = False
-use_pose_condition     = False         # whether to feed GT pose as input
-
-# Runtime
-num_workers            = 8
-vis_prediction_mode    = "Ray+Depth"   # do not change
-
-# Dataset
-resolution             = [(504, 280)]  # keep 504 fixed; second dim must be a multiple of 14
-seq_len                = 10
-test_dataset           = "100 @ RLBench(..., resolution=[(504, 280)], transform=ImgNorm, seed=985)"
-```
-
-Resolution rule: width is fixed to 504. Pick the height so that the aspect ratio matches the source frames and the value is divisible by 14 (e.g. 720/1280 ≈ 280/504).
-
-For end-to-end leaderboard evaluation against all SpatialBench datasets, use the parent harness:
+Quick test:
 
 ```bash
-# from the SpatialBench root
-python benchmark/evaluation/run_benchmark.py \
-    --config benchmark/configs/end2end/danext_eval.yaml
+python train_dan.py --config configs/train/dan-giant-train-debug.py
 ```
-
-This wires DA-Next into the unified scene index and produces per-scene depth / pose / point-cloud metrics — see the parent [README](../README.md#-quick-start) for details.
 
 ## 🙏 Acknowledgments
 
-DA-Next is built on top of [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) by ByteDance Seed and follows the multi-modality training paradigm of [OmniVGGT](https://github.com/Livioni/OmniVGGT-official). Dataset preprocessing reuses the [CUT3R](https://github.com/CUT3R/CUT3R) layout. Visualization uses [viser](https://github.com/nerfstudio-project/viser).
+DA-Next is built on top of [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) by ByteDance Seed and follows the training scripts of [OmniVGGT](https://github.com/Livioni/OmniVGGT-official). Dataset preprocessing reuses the [CUT3R](https://github.com/CUT3R/CUT3R) layout. Visualization uses [viser](https://github.com/nerfstudio-project/viser).

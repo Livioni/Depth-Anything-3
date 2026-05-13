@@ -51,7 +51,7 @@ def load_subject_masks(scene_dir: Path, split_idx: int):
 
 class Droid(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/lihao/phs_datasets/droid',
+                 dataset_location='/mnt/local/lihao/phs/datasets/droid/clean_datasets',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -118,6 +118,9 @@ class Droid(BaseStereoViewDataset):
                 if self.verbose: 
                     print('index:',full_index,'seq', seq)
                     
+                if seq == "/mnt/local/lihao/phs/datasets/droid/clean_datasets/Tue_May__9_04:20:30_2023/":
+                    continue
+                
                 for index, sub_seq in enumerate(os.listdir(seq)):
                     if index > 0:
                         continue
@@ -127,8 +130,17 @@ class Droid(BaseStereoViewDataset):
                         continue
                     # sub_scenes = sub_scenes[:100] #数据太多了，每个物体只要50个
                     rgb_path = os.path.join(seq, sub_seq, 'images','left')
-                    depth_path = os.path.join(seq, sub_seq, 'depth_npy')
-                    extrinsic_path = glob.glob(os.path.join(seq, sub_seq, 'poses_ma','poses.npy'))[0]
+                    # 这个是我们的depth
+                    # depth_path = os.path.join(seq, sub_seq, 'depth_npy')
+                    # 这个是omniworld depth
+                    depth_path = os.path.join(seq, sub_seq, 'raw_depth')
+                    
+                    #这是ma pose
+                    # extrinsic_path = glob.glob(os.path.join(seq, sub_seq, 'poses_ma','poses.npy'))[0]
+                    # 这是gt pose
+                    # extrinsic_path = glob.glob(os.path.join(seq, sub_seq, 'poses_ma','poses_depth_ba.npy'))[0]
+                    # 这是原始pose
+                    extrinsic_path = glob.glob(os.path.join(seq, sub_seq, 'extrinsics', '*left.npy'))[0]
                     intrinsic_path = glob.glob(os.path.join(seq, sub_seq, "intrinsics", '*left.npy'))[0]
                     num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
                     
@@ -165,13 +177,13 @@ class Droid(BaseStereoViewDataset):
                         self.rank[i] = ranking[ind]
                     
             # # 保存为 JSON 文件
-            os.makedirs(f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}', exist_ok=True)
-            self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/rgb_paths.json')
-            self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/depth_paths.json')
-            joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/extrinsics.joblib')
-            joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/intrinsics.joblib')
-            joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/rankings.joblib')
-            print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
+            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/depth_paths.json')
+            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/droid_annotations/{dset}/rankings.joblib')
+            # print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
         path_dict = {i: path for i, path in enumerate(paths)}
@@ -330,12 +342,12 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = '/mnt/lihao/phs_datasets/droid'  # Change this to the correct path
+    dataset_location = '/mnt/local/lihao/phs/datasets/droid/clean_datasets'  # Change this to the correct path
     dset = ''
     use_augs = False
-    num_views = 5
+    num_views = 6
     n_views_list = range(num_views)
-    quick = True  # Set to True for quick testing
+    quick = False  # Set to True for quick testing
 
     def visualize_scene(idx):
         views = dataset[idx]
@@ -344,6 +356,7 @@ if __name__ == "__main__":
         poses = views['extrinsic']
         views['extrinsic'] = closed_form_inverse_se3(poses)
         cam_size = max(auto_cam_size(poses), 0.25)
+        # cam_size = 0.05
         for view_idx in n_views_list:
             pts3d = views['world_points'][view_idx]
             valid_mask = views['valid_mask'][view_idx]
@@ -356,7 +369,7 @@ if __name__ == "__main__":
                         cam_size=cam_size)
         # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('droid-200-lbdepth.glb')
+        viz.save_glb('droid-800-oripose-omnidepth.glb')
         return 
 
     dataset = Droid(
@@ -365,7 +378,7 @@ if __name__ == "__main__":
         use_cache = False,
         use_augs=use_augs,
         top_k = 64,
-        quick=True,
+        quick=False,
         verbose=True,
         resolution=[(518,280)], 
         aug_crop=16,
@@ -379,4 +392,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    # visualize_scene((200,0,num_views))
+    visualize_scene((800,0,num_views))

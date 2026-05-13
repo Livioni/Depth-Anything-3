@@ -57,7 +57,7 @@ class RoboLab(BaseStereoViewDataset):
                  specify=False,
                  min_frames=24,
                  save_cache=False,
-                 cache_location='/mnt/local/lihao/phs/datasets/annotations/robolab_annotations',
+                 cache_location='/mnt/local/lihao/phs_datasets/annotations/robolab_annotations',
                  *args,
                  **kwargs
                  ):
@@ -181,7 +181,7 @@ class RoboLab(BaseStereoViewDataset):
 
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
-            # Persist the scan result for fast reloading via use_cache=True.
+            # Persist the scan result for fast reloading via use_cache=True. (默认禁用，cache 已离线生成)
             if self.save_cache:
                 cache_dir = os.path.join(self.cache_location, dset)
                 os.makedirs(cache_dir, exist_ok=True)
@@ -307,7 +307,7 @@ class RoboLab(BaseStereoViewDataset):
             assert 'pts3d' not in view
             assert 'valid_mask' not in view
             assert np.isfinite(view['depthmap']).all(), f'NaN in depthmap for view {view_name(view)}'
-            view['z_far'] = self.z_far
+            view['z_far'] = np.float32(self.z_far)
 
             # check all datatypes
             for key, val in view.items():
@@ -388,6 +388,7 @@ if __name__ == "__main__":
         dataset_location=dataset_location,
         dset=dset,
         use_cache=False,
+        save_cache=True,
         use_augs=use_augs,
         top_k=32,
         quick=quick,
@@ -395,11 +396,11 @@ if __name__ == "__main__":
         resolution=[(518, 291)],
         aug_crop=16,
         aug_focal=1,
-        z_far=3.0,
+        z_far=5.0,
         seed=985)
 
     sample = dataset[(0, 0, num_views)]
-    visualize_scene((100,0,num_views))
+    # visualize_scene((100,0,num_views))
     print("Dataset loaded successfully. sample keys:", list(sample.keys()))
     print("images:", sample['images'].shape,
           "depth:", sample['depth'].shape,

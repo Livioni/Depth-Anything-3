@@ -58,7 +58,7 @@ def load_depth_png_to_meters(depth_png_path: str | Path) -> np.ndarray:
 
 class ADT(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/lihao/phs_datasets/adt_processed',
+                 dataset_location='/mnt/local/lihao/phs_datasets/adt',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -86,6 +86,7 @@ class ADT(BaseStereoViewDataset):
         self.full_idxs = []
         self.all_rgb_paths = []
         self.all_depth_paths = []
+        self.all_depth_mask_paths = []
         self.all_seg_mask = []
         self.all_normal_paths = []
         self.all_extrinsic = []
@@ -105,15 +106,22 @@ class ADT(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = '/mnt/lihao/phs_datasets/annotations/adt_annotations'
+            dataset_location = '/mnt/local/lihao/phs_datasets/annotations/adt_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
+            all_depth_mask_paths_file = os.path.join(dataset_location, dset, 'depth_mask_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
                 self.all_rgb_paths = json.load(file)
             with open(all_depth_paths_file, 'r', encoding='utf-8') as file:
-                self.all_depth_paths = json.load(file)       
+                self.all_depth_paths = json.load(file)
             self.all_rgb_paths = [self.all_rgb_paths[str(i)] for i in range(len(self.all_rgb_paths))]
             self.all_depth_paths = [self.all_depth_paths[str(i)] for i in range(len(self.all_depth_paths))]
+            if os.path.isfile(all_depth_mask_paths_file):
+                with open(all_depth_mask_paths_file, 'r', encoding='utf-8') as file:
+                    depth_mask_paths_raw = json.load(file)
+                self.all_depth_mask_paths = [depth_mask_paths_raw[str(i)] for i in range(len(depth_mask_paths_raw))]
+            else:
+                self.all_depth_mask_paths = [None] * len(self.all_rgb_paths)
             self.full_idxs = list(range(len(self.all_rgb_paths)))
             self.rank = joblib.load(os.path.join(dataset_location, dset, 'rankings.joblib'))
             self.all_extrinsic = joblib.load(os.path.join(dataset_location, dset, 'extrinsics.joblib'))
@@ -131,25 +139,31 @@ class ADT(BaseStereoViewDataset):
                     
                 rgb_path = os.path.join(seq, 'rgb_rectified')
                 depth_path = os.path.join(seq, 'depth_rectified')
+                depth_mask_path = os.path.join(seq, 'depth_mask')
                 # extrinsic_path = glob.glob(os.path.join(seq, "extrinsics", '*.npy'))[0]
                 extrinsic_path = os.path.join(seq, 'camera_to_world')
                 intrinsic_path = os.path.join(seq, 'intrinsic.npy')
                 num_frames = len(glob.glob(os.path.join(rgb_path, '*.png')))
-                
+
                 if num_frames < 24:
                     print(f"Skipping sequence {seq} with only {num_frames} frames.")
                     continue
-                
+
                 new_sequence = list(len(self.full_idxs) + np.arange(num_frames))
                 old_sequence_length = len(self.full_idxs)
                 self.full_idxs.extend(new_sequence)
-                
+
                 all_rgb_paths = sorted(glob.glob(os.path.join(rgb_path, '*.png')))
                 all_depth_paths = sorted(glob.glob(os.path.join(depth_path, '*.png')))
+                all_depth_mask_paths = sorted(glob.glob(os.path.join(depth_mask_path, '*.png'))) if os.path.isdir(depth_mask_path) else []
                 all_extrinsic_paths = sorted(glob.glob(os.path.join(extrinsic_path, '*.npy')))
                 self.all_rgb_paths.extend(all_rgb_paths)
                 self.all_depth_paths.extend(all_depth_paths)
-                
+                if len(all_depth_mask_paths) == num_frames:
+                    self.all_depth_mask_paths.extend(all_depth_mask_paths)
+                else:
+                    self.all_depth_mask_paths.extend([None] * num_frames)
+
                 N = len(self.full_idxs)
 
                 all_extrinsic_numpy = []
@@ -172,14 +186,15 @@ class ADT(BaseStereoViewDataset):
                 for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
                     self.rank[i] = ranking[ind]
                     
-            # # 保存为 JSON 文件
-            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/depth_paths.json')
-            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/rankings.joblib')
-            # joblib.dump(self.all_seg_mask, f'/mnt/lihao/phs_datasets/annotations/adt_annotations/{dset}/seg_mask.joblib')
+            # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
+            # os.makedirs(f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/depth_paths.json')
+            # self._save_paths_to_json(self.all_depth_mask_paths, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/depth_mask_paths.json')
+            # joblib.dump(self.all_extrinsic, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/rankings.joblib')
+            # joblib.dump(self.all_seg_mask, f'/mnt/local/lihao/phs_datasets/annotations/adt_annotations/{dset}/seg_mask.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -213,18 +228,25 @@ class ADT(BaseStereoViewDataset):
         # Extract paths and camera parameters for selected frames
         rgb_paths = [self.all_rgb_paths[i] for i in full_idx]
         depth_paths = [self.all_depth_paths[i] for i in full_idx]
+        depth_mask_paths = [self.all_depth_mask_paths[i] if i < len(self.all_depth_mask_paths) else None for i in full_idx]
         camera_pose_list = [self.all_extrinsic[i] for i in full_idx]
         intrinsics_list = [self.all_intrinsic[i] for i in full_idx]
 
         views = []
-        for impath, depthpath, camera_pose, intrinsics in zip(rgb_paths, depth_paths, camera_pose_list, intrinsics_list):
+        for impath, depthpath, depth_mask_path, camera_pose, intrinsics in zip(rgb_paths, depth_paths, depth_mask_paths, camera_pose_list, intrinsics_list):
             # Load and preprocess images
             rgb_image = Image.open(impath).convert("RGB")
             depthmap = load_depth_png_to_meters(depthpath)
             depthmap[~np.isfinite(depthmap)] = 0  # Replace invalid depths
-            
+
+            # 边缘点、飞点过滤 (depth_mask: uint8, 0/255)
+            if depth_mask_path is not None and os.path.isfile(depth_mask_path):
+                depth_mask = cv2.imread(depth_mask_path, cv2.IMREAD_UNCHANGED)
+                if depth_mask is not None:
+                    depthmap[depth_mask == 0] = 0
+
             rgb_image, depthmap, intrinsics = self._crop_resize_if_necessary(
-                rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)  
+                rgb_image, depthmap, intrinsics, resolution, rng=rng, info=impath)
 
             # Create view dictionary
             views.append({
@@ -335,7 +357,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = '/mnt/lihao/phs_datasets/adt_processed'  # Change this to the correct path
+    dataset_location = '/mnt/local/lihao/phs_datasets/adt'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -361,13 +383,13 @@ if __name__ == "__main__":
                         cam_size=cam_size)
         # os.makedirs('./tmp/po', exist_ok=True)
         # return viz.show()
-        viz.save_glb('adt-10.glb')
+        viz.save_glb('adt-10-flyingpoints.glb')
         return 
 
     dataset = ADT(
         dataset_location=dataset_location,
         dset = dset,
-        use_cache = False,
+        use_cache = True,
         use_augs=use_augs,
         top_k = 32,
         quick=False,

@@ -54,7 +54,7 @@ def load_subject_masks(scene_dir: Path, split_idx: int):
 
 class RoboTwin(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/lihao/phs_datasets/robotwin',
+                 dataset_location='/mnt/local/lihao/phs_datasets/robotwin',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -101,7 +101,7 @@ class RoboTwin(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = '/mnt/lihao/phs_datasets/annotations/robotwin_annotations'
+            dataset_location = '/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             with open(all_rgb_paths_file, 'r', encoding='utf-8') as file:
@@ -180,14 +180,13 @@ class RoboTwin(BaseStereoViewDataset):
                         for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
                             self.rank[i] = ranking[ind]
                     
-            # # 保存为 JSON 文件
-            # os.makedirs(f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/depth_paths.json')
-            # joblib.dump(self.all_extrinsic, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/rankings.joblib')
-            # joblib.dump(self.all_seg_mask, f'/mnt/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/seg_mask.joblib')
+            # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
+            # os.makedirs(f'/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations/{dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/depth_paths.json')
+            # joblib.dump(self.all_extrinsic, f'/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/intrinsics.joblib')
+            # joblib.dump(self.rank, f'/mnt/local/lihao/phs_datasets/annotations/robotwin_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -343,7 +342,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = '/mnt/lihao/phs_datasets/robotwin'  # Change this to the correct path
+    dataset_location = '/mnt/local/lihao/phs_datasets/robotwin'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 4
@@ -375,7 +374,7 @@ if __name__ == "__main__":
     dataset = RoboTwin(
         dataset_location=dataset_location,
         dset = dset,
-        use_cache = False,
+        use_cache = True,
         use_augs=use_augs,
         top_k = 32,
         quick=False,
@@ -392,4 +391,4 @@ if __name__ == "__main__":
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
     # print(f"Visualizing scene {idx}...")
-    # visualize_scene((100,0,num_views))
+    visualize_scene((1000,0,num_views))

@@ -34,7 +34,7 @@ ToTensor = tvf.ToTensor()
 
 class Infinigen(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/disk3.8-2/da3_datasets/processed_infinigen',
+                 dataset_location='/mnt/local/lihao/phs_datasets/infinigen',
                  dset='',
                  use_cache=True,
                  use_augs=False,
@@ -82,7 +82,7 @@ class Infinigen(BaseStereoViewDataset):
         print('found %d unique videos in %s (dset=%s)' % (len(self.sequences), dataset_location, dset)) 
         
         if self.use_cache:
-            dataset_location = 'annotations/infinigen_annotations'
+            dataset_location = '/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations'
             all_rgb_paths_file = os.path.join(dataset_location, dset, 'rgb_paths.json')
             all_depth_paths_file = os.path.join(dataset_location, dset, 'depth_paths.json')
             all_seg_mask_paths_file = os.path.join(dataset_location, dset, 'seg_mask_paths.json')
@@ -164,14 +164,14 @@ class Infinigen(BaseStereoViewDataset):
                     for ind, i in enumerate(range(old_sequence_length, len(self.full_idxs))):
                         self.rank[i] = ranking[ind] 
                     
-            # # 保存为 JSON 文件
-            # os.makedirs(f'annotations/infinigen_annotations/{self.dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'annotations/infinigen_annotations/{self.dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'annotations/infinigen_annotations/{self.dset}/depth_paths.json')
-            # self._save_paths_to_json(self.all_seg_mask_paths, f'annotations/infinigen_annotations/{self.dset}/seg_mask_paths.json')
-            # joblib.dump(self.rank, f'annotations/infinigen_annotations/{self.dset}/rankings.joblib')
-            # joblib.dump(self.all_extrinsic, f'annotations/infinigen_annotations/{self.dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'annotations/infinigen_annotations/{self.dset}/intrinsics.joblib')
+            # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
+            # os.makedirs(f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}', exist_ok=True)
+            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}/rgb_paths.json')
+            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}/depth_paths.json')
+            # self._save_paths_to_json(self.all_seg_mask_paths, f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}/seg_mask_paths.json')
+            # joblib.dump(self.rank, f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}/rankings.joblib')
+            # joblib.dump(self.all_extrinsic, f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}/extrinsics.joblib')
+            # joblib.dump(self.all_intrinsic, f'/mnt/local/lihao/phs_datasets/annotations/infinigen_annotations/{self.dset}/intrinsics.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
         
     
@@ -486,11 +486,10 @@ class Infinigen(BaseStereoViewDataset):
             'world_coords_points': ('world_points', np.stack),
             'true_shape': ('true_shape', np.array),
             'point_mask': ('valid_mask', np.stack),
-            'seg_mask': ('seg_mask', np.stack),
             'label': ('label', lambda x: x),  # Keep as list
             'instance': ('instance', lambda x: x),  # Keep as list
         }
-                
+
         # Collect and stack data using list comprehensions and field config
         result = {}
         for field_key, (output_key, stack_func, *input_keys) in field_config.items():
@@ -498,11 +497,6 @@ class Infinigen(BaseStereoViewDataset):
             data_list = [view[input_key] for view in views]
             result[output_key] = stack_func(data_list)
 
-        # Convert seg_mask_list to instance masks
-        instance_mask = self._create_instance_masks(result['seg_mask'])
-        del result['seg_mask']
-        result['gt_mask'] = instance_mask
-                
         # Add dataset label
         result['dataset'] = self.dataset_label
 
@@ -541,7 +535,7 @@ if __name__ == "__main__":
         return
 
     dataset = Infinigen(
-        dataset_location="/mnt/disk3.8-2/da3_datasets/processed_infinigen",
+        dataset_location="/mnt/local/lihao/phs_datasets/infinigen",
         dset = '',
         use_cache = True,
         use_augs=use_augs, 
@@ -557,5 +551,5 @@ if __name__ == "__main__":
     dataset[(101,0,16)]
     print("Dataset loaded successfully.")
     # idx = random.randint(0, len(dataset)-1)
-    # visualize_scene((1000,0,num_views))
+    visualize_scene((1000,0,num_views))
     # print(len(dataset))
