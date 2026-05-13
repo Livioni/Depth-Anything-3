@@ -32,7 +32,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 
 class Scannetppv2(BaseStereoViewDataset):
     def __init__(self,
-                 dataset_location='/mnt/local/lihao/phs_datasets/scannetpp',
+                 dataset_location='datasets/scannetpp',
                  dset='',
                  use_cache=False,
                  use_augs=False,
@@ -151,12 +151,12 @@ class Scannetppv2(BaseStereoViewDataset):
                     self.rank[i] = ranking[ind]
                     
             # 保存为 JSON 文件 (默认禁用，cache 已离线生成)
-            # os.makedirs(f'/mnt/local/lihao/phs_datasets/annotations/scannetppv2_annotations/{dset}', exist_ok=True)
-            # self._save_paths_to_json(self.all_rgb_paths, f'/mnt/local/lihao/phs_datasets/annotations/scannetppv2_annotations/{dset}/rgb_paths.json')
-            # self._save_paths_to_json(self.all_depth_paths, f'/mnt/local/lihao/phs_datasets/annotations/scannetppv2_annotations/{dset}/depth_paths.json')
-            # joblib.dump(self.all_extrinsic, f'/mnt/local/lihao/phs_datasets/annotations/scannetppv2_annotations/{dset}/extrinsics.joblib')
-            # joblib.dump(self.all_intrinsic, f'/mnt/local/lihao/phs_datasets/annotations/scannetppv2_annotations/{dset}/intrinsics.joblib')
-            # joblib.dump(self.rank, f'/mnt/local/lihao/phs_datasets/annotations/scannetppv2_annotations/{dset}/rankings.joblib')
+            os.makedirs(f'annotations/scannetppv2_annotations/{dset}', exist_ok=True)
+            self._save_paths_to_json(self.all_rgb_paths, f'annotations/scannetppv2_annotations/{dset}/rgb_paths.json')
+            self._save_paths_to_json(self.all_depth_paths, f'annotations/scannetppv2_annotations/{dset}/depth_paths.json')
+            joblib.dump(self.all_extrinsic, f'annotations/scannetppv2_annotations/{dset}/extrinsics.joblib')
+            joblib.dump(self.all_intrinsic, f'annotations/scannetppv2_annotations/{dset}/intrinsics.joblib')
+            joblib.dump(self.rank, f'annotations/scannetppv2_annotations/{dset}/rankings.joblib')
             print('found %d frames in %s (dset=%s)' % (len(self.full_idxs), dataset_location, dset))
 
     def _save_paths_to_json(self, paths, filename):
@@ -448,7 +448,7 @@ if __name__ == "__main__":
     from src.viz import SceneViz, auto_cam_size
     from src.utils.image import rgb
 
-    dataset_location = '/mnt/local/lihao/phs_datasets/scannetpp'  # Change this to the correct path
+    dataset_location = 'datasets/scannetpp'  # Change this to the correct path
     dset = ''
     use_augs = False
     num_views = 5
@@ -480,7 +480,7 @@ if __name__ == "__main__":
     dataset = Scannetppv2(
         dataset_location=dataset_location,
         dset = dset,
-        use_cache = True,
+        use_cache = False,
         use_augs=use_augs,
         top_k = 256,
         quick=False,

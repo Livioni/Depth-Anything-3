@@ -21,7 +21,6 @@ from src.datasets.utils.misc import threshold_depth_map
 from src.datasets.utils.cropping import ImageList, camera_matrix_of_crop, bbox_from_intrinsics_in_out
 from src.utils.image import imread_cv2
 from visual_util import show_anns
-from pycocotools import mask as mask_utils
 from pathlib import Path
 
 try:
@@ -33,24 +32,6 @@ except AttributeError:
 
 np.random.seed(125)
 torch.multiprocessing.set_sharing_strategy('file_system')
-
-
-def load_subject_masks(scene_dir: Path, split_idx: int):
-    """
-    Returns
-    -------
-    masks : list[np.ndarray]  (H, W) bool
-    """
-    seg_mask_list = []
-    segmask_path = scene_dir
-    with open(segmask_path, "r", encoding="utf-8") as f:
-        seg_masks = json.load(f)
-    for key in seg_masks.keys():
-        seg_mask = seg_masks[key]
-        seg_mask = mask_utils.decode(seg_mask["mask_rle"])
-        seg_mask_list.append(seg_mask)
-
-    return seg_mask_list
 
 class RoboTwin(BaseStereoViewDataset):
     def __init__(self,

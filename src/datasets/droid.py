@@ -18,7 +18,6 @@ from src.datasets.utils.image_ranking import compute_ranking
 from src.utils.geometry import depth_to_world_coords_points, closed_form_inverse_se3
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
 from src.utils.image import imread_cv2
-from pycocotools import mask as mask_utils
 from pathlib import Path
 
 try:
@@ -31,23 +30,6 @@ except AttributeError:
 np.random.seed(125)
 torch.multiprocessing.set_sharing_strategy('file_system')
 
-
-def load_subject_masks(scene_dir: Path, split_idx: int):
-    """
-    Returns
-    -------
-    masks : list[np.ndarray]  (H, W) bool
-    """
-    seg_mask_list = []
-    segmask_path = scene_dir
-    with open(segmask_path, "r", encoding="utf-8") as f:
-        seg_masks = json.load(f)
-    for key in seg_masks.keys():
-        seg_mask = seg_masks[key]
-        seg_mask = mask_utils.decode(seg_mask["mask_rle"])
-        seg_mask_list.append(seg_mask)
-
-    return seg_mask_list
 
 class Droid(BaseStereoViewDataset):
     def __init__(self,

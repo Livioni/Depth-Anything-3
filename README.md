@@ -43,7 +43,13 @@ DA-Next/
 
 ## 🔧 Setup
 
-The base SpatialBench environment already provides PyTorch and most dependencies. Install the few DA-Next-specific extras on top:
+```bash
+conda create -n dan python=3.11
+conda activate dan
+# Install the appropriate PyTorch suitable for your cuda version, For example
+pip install torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1 --index-url https://download.pytorch.org/whl/cu128
+pip install -r requirements.txt
+```
 
 ### Checkpoints
 

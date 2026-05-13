@@ -17,7 +17,6 @@ from src.datasets.base.base_stereo_view_dataset import BaseStereoViewDataset
 from src.datasets.utils.image_ranking import compute_ranking
 from src.utils.geometry import closed_form_inverse_se3
 from src.datasets.base.base_stereo_view_dataset import is_good_type, view_name, transpose_to_landscape
-from pycocotools import mask as mask_utils
 from pathlib import Path
 
 try:
@@ -127,23 +126,6 @@ def depth_to_world_pointcloud_rlbench(
 
     return world_coords_points, cam_coords_points, point_mask
 
-
-def load_subject_masks(scene_dir: Path, split_idx: int):
-    """
-    Returns
-    -------
-    masks : list[np.ndarray]  (H, W) bool
-    """
-    seg_mask_list = []
-    segmask_path = scene_dir
-    with open(segmask_path, "r", encoding="utf-8") as f:
-        seg_masks = json.load(f)
-    for key in seg_masks.keys():
-        seg_mask = seg_masks[key]
-        seg_mask = mask_utils.decode(seg_mask["mask_rle"])
-        seg_mask_list.append(seg_mask)
-
-    return seg_mask_list
 
 class RLBench(BaseStereoViewDataset):
     def __init__(self,
